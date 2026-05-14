@@ -58,13 +58,19 @@ public class ModService {
       String sha1 = null;
       String sha512 = null;
       if (checkUpdates) {
-        byte[] bytes = connectionService.fileSystem(profile).readBytes(entry.path());
-        sha1 = digest("SHA-1", bytes);
-        sha512 = digest("SHA-512", bytes);
+        try {
+          log.info("Hashing mod {}", entry.path());
+          byte[] bytes = connectionService.fileSystem(profile).readBytes(entry.path());
+          sha1 = digest("SHA-1", bytes);
+          sha512 = digest("SHA-512", bytes);
+          log.info("Finished hashing mod {}", entry.path());
+        } catch (IOException e) {
+          log.warn("Failed to hash mod {}", entry.path(), e);
+        }
       }
       boolean archived = entry.name().endsWith(".old");
       ModUpdate update = null;
-      if (checkUpdates && !archived) {
+      if (checkUpdates && !archived && sha1 != null) {
         try {
           Optional<ModUpdate> suggested = modrinthClient.findSuggestedUpdate(sha1);
           update = suggested.orElse(null);

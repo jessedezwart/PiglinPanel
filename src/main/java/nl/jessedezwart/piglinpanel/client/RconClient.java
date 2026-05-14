@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
 import nl.jessedezwart.piglinpanel.model.RconConfig;
@@ -19,6 +20,7 @@ public class RconClient implements Closeable {
   private static final int AUTH = 3;
   private static final int COMMAND = 2;
   private static final int RESPONSE = 0;
+  private static final Charset PAYLOAD_CHARSET = StandardCharsets.US_ASCII;
   private final Socket socket;
   private final DataInputStream input;
   private final DataOutputStream output;
@@ -50,14 +52,15 @@ public class RconClient implements Closeable {
   }
 
   private void send(int id, int type, String body) throws IOException {
-    byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
-    ByteBuffer buffer = ByteBuffer.allocate(4 + 4 + bodyBytes.length + 2).order(ByteOrder.LITTLE_ENDIAN);
+    byte[] bodyBytes = body.getBytes(PAYLOAD_CHARSET);
+    int bodyLength = 4 + 4 + bodyBytes.length + 2;
+    ByteBuffer buffer = ByteBuffer.allocate(4 + bodyLength).order(ByteOrder.LITTLE_ENDIAN);
+    buffer.putInt(bodyLength);
     buffer.putInt(id);
     buffer.putInt(type);
     buffer.put(bodyBytes);
     buffer.put((byte) 0);
     buffer.put((byte) 0);
-    output.writeInt(Integer.reverseBytes(buffer.capacity()));
     output.write(buffer.array());
     output.flush();
   }
@@ -65,16 +68,22 @@ public class RconClient implements Closeable {
   private Packet read() throws IOException {
     try {
       int length = Integer.reverseBytes(input.readInt());
-      byte[] bytes = input.readNBytes(length);
-      if (bytes.length < length) {
-        throw new EOFException("RCON response was truncated");
+      if (length < 10) {
+        throw new IOException("Malformed RCON packet length " + length);
       }
+      byte[] bytes = new byte[length];
+      input.readFully(bytes);
       ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
       int id = buffer.getInt();
       int type = buffer.getInt();
-      byte[] body = new byte[Math.max(0, length - 10)];
+      byte[] body = new byte[length - 10];
       buffer.get(body);
-      return new Packet(id, type, new String(body, StandardCharsets.UTF_8));
+      byte null1 = buffer.get();
+      byte null2 = buffer.get();
+      if (null1 != 0 || null2 != 0) {
+        throw new IOException("Invalid RCON packet terminator");
+      }
+      return new Packet(id, type, new String(body, PAYLOAD_CHARSET));
     } catch (EOFException e) {
       throw new EOFException("RCON connection closed by server");
     }
