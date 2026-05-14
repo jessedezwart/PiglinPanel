@@ -6,6 +6,7 @@ import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
@@ -86,7 +87,22 @@ class RconView {
   }
 
   private void setLogText(TextArea latest, String text) {
+    boolean keepTail = isScrolledToBottom(latest);
+    double scrollTop = latest.getScrollTop();
     latest.setText(text == null ? "" : text);
-    latest.positionCaret(latest.getText().length());
+    if (keepTail) {
+      latest.positionCaret(latest.getLength());
+      latest.setScrollTop(Double.MAX_VALUE);
+    } else {
+      latest.setScrollTop(scrollTop);
+    }
+  }
+
+  private boolean isScrolledToBottom(TextArea latest) {
+    ScrollBar bar = (ScrollBar) latest.lookup(".scroll-bar:vertical");
+    if (bar == null) {
+      return true;
+    }
+    return bar.getValue() >= bar.getMax() - 0.5;
   }
 }

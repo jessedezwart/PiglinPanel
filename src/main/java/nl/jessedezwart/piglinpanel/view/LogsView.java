@@ -9,6 +9,7 @@ import javafx.animation.Timeline;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.scene.Node;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.ScrollBar;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
@@ -104,8 +105,23 @@ class LogsView {
   }
 
   private void setLogText(TextArea latest, String text) {
-    latest.setText(text);
-    latest.positionCaret(text == null ? 0 : text.length());
+    boolean keepTail = isScrolledToBottom(latest);
+    double scrollTop = latest.getScrollTop();
+    latest.setText(text == null ? "" : text);
+    if (keepTail) {
+      latest.positionCaret(latest.getLength());
+      latest.setScrollTop(Double.MAX_VALUE);
+    } else {
+      latest.setScrollTop(scrollTop);
+    }
+  }
+
+  private boolean isScrolledToBottom(TextArea latest) {
+    ScrollBar bar = (ScrollBar) latest.lookup(".scroll-bar:vertical");
+    if (bar == null) {
+      return true;
+    }
+    return bar.getValue() >= bar.getMax() - 0.5;
   }
 
   private TableView<FileEntry> logTable() {
