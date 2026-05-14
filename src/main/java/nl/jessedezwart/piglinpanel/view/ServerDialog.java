@@ -30,8 +30,6 @@ public class ServerDialog extends Dialog<ServerProfile> {
   private final ComboBox<AccessType> accessType = new ComboBox<>();
   private final TextField rootPath = new TextField();
   private final TextField logsPath = new TextField();
-  private final TextField serverPropertiesPath = new TextField();
-  private final TextArea configFolders = new TextArea();
   private final TextArea modFolders = new TextArea();
   private final TextField sshHost = new TextField();
   private final TextField sshPort = new TextField();
@@ -46,8 +44,6 @@ public class ServerDialog extends Dialog<ServerProfile> {
     accessType.setValue(profile.getAccessType());
     rootPath.setText(profile.getRootPath());
     logsPath.setText(profile.getLogsPath());
-    serverPropertiesPath.setText(profile.getServerPropertiesPath());
-    configFolders.setText(String.join("\n", profile.getConfigFolders()));
     modFolders.setText(formatModFolders(profile.getModFolders()));
     sshHost.setText(profile.getSsh().getHost());
     sshPort.setText(Integer.toString(profile.getSsh().getPort()));
@@ -65,9 +61,6 @@ public class ServerDialog extends Dialog<ServerProfile> {
     row = add(grid, row, "Access", accessType);
     row = add(grid, row, "Root path", rootPath);
     row = add(grid, row, "Logs path", logsPath);
-    row = add(grid, row, "server.properties", serverPropertiesPath);
-    configFolders.setPrefRowCount(3);
-    row = add(grid, row, "Config folders", configFolders);
     modFolders.setPrefRowCount(4);
     row = add(grid, row, "Mod folders", modFolders);
     row = label(grid, row, "Mod folder format: Name=relative/path, one per line");
@@ -78,7 +71,6 @@ public class ServerDialog extends Dialog<ServerProfile> {
     row = add(grid, row, "Password", sshPassword);
     row = add(grid, row, "Private key", sshPrivateKey);
     row = add(grid, row, "Key passphrase", sshPassphrase);
-    label(grid, row, "RCON is inferred from server.properties when the server is selected.");
     return grid;
   }
 
@@ -88,9 +80,6 @@ public class ServerDialog extends Dialog<ServerProfile> {
     profile.setAccessType(accessType.getValue());
     profile.setRootPath(rootPath.getText());
     profile.setLogsPath(logsPath.getText());
-    profile.setServerPropertiesPath(serverPropertiesPath.getText());
-    profile.setConfigFolders(
-        configFolders.getText().lines().filter(line -> !line.isBlank()).toList());
     profile.setModFolders(parseModFolders(modFolders.getText()));
     profile.getSsh().setHost(sshHost.getText());
     profile.getSsh().setPort(parseInt(sshPort.getText(), 22));

@@ -7,16 +7,20 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.BiConsumer;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
 import nl.jessedezwart.piglinpanel.model.FileEntry;
 import nl.jessedezwart.piglinpanel.model.ModFile;
 import nl.jessedezwart.piglinpanel.model.ModFolder;
 import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ModService {
+  private static final Logger log = LoggerFactory.getLogger(ModService.class);
   private final ServerConnectionService connectionService;
   private final ModrinthClient modrinthClient;
 
@@ -26,49 +30,80 @@ public class ModService {
   }
 
   public List<ModFile> scan(ServerProfile profile, boolean checkUpdates) throws IOException {
-    List<ModFile> mods = new ArrayList<>();
+    return scan(profile, checkUpdates, (done, total) -> {
+    });
+  }
+
+  public List<ModFile> scan(
+      ServerProfile profile, boolean checkUpdates, BiConsumer<Integer, Integer> progress)
+      throws IOException {
+    log.info("Scanning mods for {} (checkUpdates={})", profile.getName(), checkUpdates);
+    List<Candidate> candidates = new ArrayList<>();
     for (ModFolder folder : profile.getModFolders()) {
       for (FileEntry entry : connectionService.fileSystem(profile).list(folder.getPath())) {
         if (entry.directory()
             || (!entry.name().endsWith(".jar") && !entry.name().endsWith(".jar.old"))) {
           continue;
         }
-        byte[] bytes = connectionService.fileSystem(profile).readBytes(entry.path());
-        String sha1 = digest("SHA-1", bytes);
-        String sha512 = digest("SHA-512", bytes);
-        boolean archived = entry.name().endsWith(".old");
-        ModUpdate update = null;
-        if (checkUpdates && !archived) {
-          try {
-            Optional<ModUpdate> suggested = modrinthClient.findSuggestedUpdate(sha1);
-            update = suggested.filter(ModUpdate::available).orElse(null);
-          } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Interrupted while checking Modrinth", e);
-          }
-        }
-        mods.add(
-            new ModFile(
-                folder.getId(),
-                folder.getPath(),
-                entry.path(),
-                entry.name(),
-                entry.size(),
-                archived,
-                sha1,
-                sha512,
-                update));
+        candidates.add(new Candidate(folder, entry));
       }
     }
+    int total = candidates.size();
+    int done = 0;
+    progress.accept(done, total);
+    List<ModFile> mods = new ArrayList<>(total);
+    for (Candidate candidate : candidates) {
+      ModFolder folder = candidate.folder();
+      FileEntry entry = candidate.entry();
+      String sha1 = null;
+      String sha512 = null;
+      if (checkUpdates) {
+        byte[] bytes = connectionService.fileSystem(profile).readBytes(entry.path());
+        sha1 = digest("SHA-1", bytes);
+        sha512 = digest("SHA-512", bytes);
+      }
+      boolean archived = entry.name().endsWith(".old");
+      ModUpdate update = null;
+      if (checkUpdates && !archived) {
+        try {
+          Optional<ModUpdate> suggested = modrinthClient.findSuggestedUpdate(sha1);
+          update = suggested.orElse(null);
+        } catch (IOException e) {
+          log.warn("Modrinth lookup failed for {}", entry.path(), e);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new IOException("Interrupted while checking Modrinth", e);
+        }
+      }
+      mods.add(
+          new ModFile(
+              folder.getId(),
+              folder.getPath(),
+              entry.path(),
+              entry.name(),
+              entry.size(),
+              archived,
+              sha1,
+              sha512,
+              update));
+      done += 1;
+      progress.accept(done, total);
+    }
+    log.info("Scan complete for {}: {} mods", profile.getName(), mods.size());
     return mods;
+  }
+
+  private record Candidate(ModFolder folder, FileEntry entry) {
   }
 
   public void upload(ServerProfile profile, ModFolder folder, String fileName, byte[] bytes)
       throws IOException {
+    log.info("Uploading {} to {}:{}", fileName, profile.getName(), folder.getPath());
     connectionService.fileSystem(profile).writeBytes(folder.getPath() + "/" + fileName, bytes);
   }
 
   public void delete(ServerProfile profile, ModFile modFile) throws IOException {
+    log.info("Deleting {} from {}", modFile.relativePath(), profile.getName());
     connectionService.fileSystem(profile).delete(modFile.relativePath());
   }
 
@@ -77,6 +112,11 @@ public class ModService {
     if (update == null || !update.available()) {
       throw new IOException("No update is available for " + modFile.fileName());
     }
+    log.info(
+        "Applying update for {} in {} to version {}",
+        modFile.fileName(),
+        profile.getName(),
+        update.latestVersionName());
     try {
       byte[] bytes = modrinthClient.download(update.downloadUrl());
       String archivedName = nextArchiveName(modFile.relativePath());

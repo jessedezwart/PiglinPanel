@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -20,7 +21,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class ModrinthClient {
   private static final String API_BASE_URL = "https://api.modrinth.com/v2";
-  private final HttpClient httpClient = HttpClient.newHttpClient();
+  private final HttpClient httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
   private final ObjectMapper objectMapper;
 
   public ModrinthClient(ObjectMapper objectMapper) {
@@ -35,36 +36,49 @@ public class ModrinthClient {
     }
     Version currentVersion = current.get();
     Optional<Project> project = project(currentVersion.projectId());
-    List<Version> versions =
-        versionsForProject(currentVersion.projectId(), currentVersion.gameVersions());
-    Optional<Version> latest =
-        versions.stream()
-            .max(
-                Comparator.comparing(
-                    Version::datePublished, Comparator.nullsFirst(String::compareTo)));
+    String projectName = project.map(Project::title).orElse(currentVersion.projectId());
+    List<Version> versions = versionsForProject(currentVersion.projectId(), currentVersion.gameVersions());
+    Optional<Version> latest = versions.stream()
+        .max(
+            Comparator.comparing(
+                Version::datePublished, Comparator.nullsFirst(String::compareTo)));
     if (latest.isEmpty()) {
-      return Optional.empty();
+      return Optional.of(
+          new ModUpdate(
+              currentVersion.projectId(),
+              projectName,
+              currentVersion.id(),
+              currentVersion.id(),
+              currentVersion.name(),
+              null,
+              null));
     }
-    File latestFile = latest.get().primaryFile().orElse(null);
-    if (latestFile == null || latestFile.url() == null || latestFile.filename() == null) {
-      return Optional.empty();
+    Version latestVersion = latest.get();
+    File latestFile = latestVersion.primaryFile().orElse(null);
+    URI downloadUrl = null;
+    String fileName = null;
+    if (latestFile != null && latestFile.url() != null && latestFile.filename() != null) {
+      downloadUrl = URI.create(latestFile.url());
+      fileName = latestFile.filename();
     }
     return Optional.of(
         new ModUpdate(
             currentVersion.projectId(),
-            project.map(Project::title).orElse(currentVersion.projectId()),
+            projectName,
             currentVersion.id(),
-            latest.get().id(),
-            latest.get().name(),
-            URI.create(latestFile.url()),
-            latestFile.filename()));
+            latestVersion.id(),
+            latestVersion.name(),
+            downloadUrl,
+            fileName));
   }
 
   public byte[] download(URI uri) throws IOException, InterruptedException {
-    HttpRequest request =
-        HttpRequest.newBuilder(uri).header("User-Agent", "Piglinpanel/0.1").GET().build();
-    HttpResponse<byte[]> response =
-        httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+    HttpRequest request = HttpRequest.newBuilder(uri)
+        .timeout(Duration.ofSeconds(20))
+        .header("User-Agent", "Piglinpanel/0.1")
+        .GET()
+        .build();
+    HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
     if (response.statusCode() / 100 != 2) {
       throw new IOException("Download failed with HTTP " + response.statusCode());
     }
@@ -72,8 +86,7 @@ public class ModrinthClient {
   }
 
   private Optional<Version> versionByHash(String sha1) throws IOException, InterruptedException {
-    HttpRequest request =
-        request(API_BASE_URL + "/version_file/" + encode(sha1) + "?algorithm=sha1");
+    HttpRequest request = request(API_BASE_URL + "/version_file/" + encode(sha1) + "?algorithm=sha1");
     HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
     if (response.statusCode() == 404) {
       return Optional.empty();
@@ -83,10 +96,9 @@ public class ModrinthClient {
   }
 
   private Optional<Project> project(String projectId) throws IOException, InterruptedException {
-    HttpResponse<String> response =
-        httpClient.send(
-            request(API_BASE_URL + "/project/" + encode(projectId)),
-            HttpResponse.BodyHandlers.ofString());
+    HttpResponse<String> response = httpClient.send(
+        request(API_BASE_URL + "/project/" + encode(projectId)),
+        HttpResponse.BodyHandlers.ofString());
     if (response.statusCode() == 404) {
       return Optional.empty();
     }
@@ -97,20 +109,18 @@ public class ModrinthClient {
   private List<Version> versionsForProject(String projectId, List<String> gameVersions)
       throws IOException, InterruptedException {
     String loaders = encode("[\"neoforge\"]");
-    String gameVersionParam =
-        gameVersions == null || gameVersions.isEmpty()
-            ? ""
-            : "&game_versions=" + encode(objectMapper.writeValueAsString(gameVersions));
-    HttpResponse<String> response =
-        httpClient.send(
-            request(
-                API_BASE_URL
-                    + "/project/"
-                    + encode(projectId)
-                    + "/version?loaders="
-                    + loaders
-                    + gameVersionParam),
-            HttpResponse.BodyHandlers.ofString());
+    String gameVersionParam = gameVersions == null || gameVersions.isEmpty()
+        ? ""
+        : "&game_versions=" + encode(objectMapper.writeValueAsString(gameVersions));
+    HttpResponse<String> response = httpClient.send(
+        request(
+            API_BASE_URL
+                + "/project/"
+                + encode(projectId)
+                + "/version?loaders="
+                + loaders
+                + gameVersionParam),
+        HttpResponse.BodyHandlers.ofString());
     requireSuccess(response);
     JsonNode node = objectMapper.readTree(response.body());
     return objectMapper.readerForListOf(Version.class).readValue(node);
@@ -118,6 +128,7 @@ public class ModrinthClient {
 
   private static HttpRequest request(String uri) {
     return HttpRequest.newBuilder(URI.create(uri))
+        .timeout(Duration.ofSeconds(10))
         .header("User-Agent", "Piglinpanel/0.1")
         .GET()
         .build();
@@ -134,7 +145,8 @@ public class ModrinthClient {
   }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
-  public record Project(String id, String title) {}
+  public record Project(String id, String title) {
+  }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Version(
@@ -156,5 +168,6 @@ public class ModrinthClient {
   }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
-  public record File(String filename, String url, boolean primary) {}
+  public record File(String filename, String url, boolean primary) {
+  }
 }

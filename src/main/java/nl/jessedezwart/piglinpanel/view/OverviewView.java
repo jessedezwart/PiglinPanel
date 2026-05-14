@@ -18,8 +18,6 @@ class OverviewView {
             new Label("Access: " + profile.getAccessType()),
             new Label("Root: " + profile.getRootPath()),
             new Label("Logs: " + profile.getLogsPath()),
-            new Label("server.properties: " + profile.getServerPropertiesPath()),
-            new Label("Config folders: " + String.join(", ", profile.getConfigFolders())),
             new Label(
                 "Mod folders: "
                     + profile.getModFolders().stream()

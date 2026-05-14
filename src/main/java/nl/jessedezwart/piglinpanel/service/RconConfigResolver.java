@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 public class RconConfigResolver {
   private static final int DEFAULT_PORT = 25575;
   private static final String LOCAL_HOST = "127.0.0.1";
+  private static final String SERVER_PROPERTIES_PATH = "server.properties";
 
   private final ServerConnectionService connectionService;
 
@@ -40,8 +41,7 @@ public class RconConfigResolver {
   }
 
   private Properties readServerProperties(ServerProfile profile) throws IOException {
-    byte[] bytes =
-        connectionService.fileSystem(profile).readBytes(profile.getServerPropertiesPath());
+    byte[] bytes = connectionService.fileSystem(profile).readBytes(SERVER_PROPERTIES_PATH);
     Properties properties = new Properties();
     properties.load(new ByteArrayInputStream(bytes));
     return properties;
