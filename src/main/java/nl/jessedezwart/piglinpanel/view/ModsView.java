@@ -5,7 +5,7 @@ import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
@@ -35,56 +35,55 @@ class ModsView {
     ServerProfile profile = context.profile();
     TableView<ModFile> installed = modTable();
     TableView<ModFile> archived = modTable();
-    ProgressIndicator progress = new ProgressIndicator();
-    progress.setVisible(false);
-    progress.setManaged(false);
-    progress.setPrefSize(18, 18);
-    progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+    installed.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
     Button checkUpdates = new Button("Check updates");
     Button update = new Button("Update selected");
     Button delete = new Button("Delete selected");
     Button upload = new Button("Upload jar");
-    checkUpdates.setOnAction(event -> loadMods(profile, true, installed, archived, progress));
+    checkUpdates.setOnAction(event -> loadMods(profile, true, installed, archived, checkUpdates));
     update.setOnAction(
         event -> {
-          ModFile selected = installed.getSelectionModel().getSelectedItem();
-          if (selected != null) {
-            log.info("Applying update to {} in {}", selected.fileName(), profile.getName());
-            progress.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
-            progress.setVisible(true);
-            UiTasks.run(
-                () -> {
-                  modService.applyUpdate(profile, selected);
-                  return null;
-                },
-                ignored -> loadMods(profile, false, installed, archived, progress),
-                error -> progress.setVisible(false),
-                null);
+          List<ModFile> selected = List.copyOf(installed.getSelectionModel().getSelectedItems());
+          if (selected.isEmpty()) {
+            return;
           }
+          log.info("Applying updates to {} mods in {}", selected.size(), profile.getName());
+          UiTasks.run(
+              () -> {
+                for (ModFile mod : selected) {
+                  modService.applyUpdate(profile, mod);
+                }
+                return null;
+              },
+              ignored -> loadMods(profile, false, installed, archived, checkUpdates),
+              null,
+              null);
         });
     delete.setOnAction(
         event -> {
-          ModFile selected = installed.getSelectionModel().getSelectedItem();
-          if (selected != null) {
-            log.info("Deleting mod {} from {}", selected.fileName(), profile.getName());
-            UiTasks.run(
-                () -> {
-                  modService.delete(profile, selected);
-                  return null;
-                },
-                ignored -> loadMods(profile, false, installed, archived, progress),
-                error -> progress.setVisible(false),
-                null);
+          List<ModFile> selected = List.copyOf(installed.getSelectionModel().getSelectedItems());
+          if (selected.isEmpty()) {
+            return;
           }
+          log.info("Deleting {} mods from {}", selected.size(), profile.getName());
+          UiTasks.run(
+              () -> {
+                for (ModFile mod : selected) {
+                  modService.delete(profile, mod);
+                }
+                return null;
+              },
+              ignored -> loadMods(profile, false, installed, archived, checkUpdates),
+              null,
+              null);
         });
-    upload.setOnAction(event -> uploadMod(context, installed, archived, progress));
+    upload.setOnAction(event -> uploadMod(context, installed, archived, checkUpdates));
     TabPane tabs = new TabPane(new Tab("Installed", installed), new Tab("Archived", archived));
     tabs.getTabs().forEach(tab -> tab.setClosable(false));
-    progress.managedProperty().bind(progress.visibleProperty());
     VBox box = ViewLayout.contentBox(
-        new HBox(8, checkUpdates, update, delete, upload, progress), tabs);
+        new HBox(8, checkUpdates, update, delete, upload), tabs);
     VBox.setVgrow(tabs, Priority.ALWAYS);
-    loadMods(profile, false, installed, archived, progress);
+    loadMods(profile, false, installed, archived, checkUpdates);
     return box;
   }
 
@@ -92,6 +91,7 @@ class ModsView {
     TableView<ModFile> table = new TableView<>();
     table.getColumns().add(column("Folder", ModFile::folderPath));
     table.getColumns().add(column("File", ModFile::fileName));
+    table.getColumns().add(column("SHA-1", mod -> mod.sha1() == null ? "" : mod.sha1()));
     table
         .getColumns()
         .add(
@@ -111,26 +111,28 @@ class ModsView {
       boolean checkUpdates,
       TableView<ModFile> installed,
       TableView<ModFile> archived,
-      ProgressIndicator progress) {
+      Button checkUpdatesButton) {
     log.info("Loading mods for {} (checkUpdates={})", profile.getName(), checkUpdates);
     if (checkUpdates) {
-      progress.setVisible(true);
-      progress.setProgress(0);
+      checkUpdatesButton.setDisable(true);
+      installed.getItems().clear();
+      archived.getItems().clear();
     }
     UiTasks.run(
         () -> modService.scan(
             profile,
             checkUpdates,
-            (done, total) -> {
+            mod -> {
               if (!checkUpdates) {
                 return;
               }
-              double value = total == 0 ? 1.0 : (double) done / total;
-              Platform.runLater(() -> progress.setProgress(value));
+              Platform.runLater(() -> addMod(installed, archived, mod));
             }),
         mods -> {
-          installed.getItems().setAll(mods.stream().filter(mod -> !mod.archived()).toList());
-          archived.getItems().setAll(mods.stream().filter(ModFile::archived).toList());
+          if (!checkUpdates) {
+            installed.getItems().setAll(mods.stream().filter(mod -> !mod.archived()).toList());
+            archived.getItems().setAll(mods.stream().filter(ModFile::archived).toList());
+          }
           log.info(
               "Loaded {} installed and {} archived mods for {}",
               installed.getItems().size(),
@@ -139,17 +141,25 @@ class ModsView {
         },
         null,
         () -> {
-          if (checkUpdates || progress.isVisible()) {
-            progress.setVisible(false);
+          if (checkUpdatesButton.isDisabled()) {
+            checkUpdatesButton.setDisable(false);
           }
         });
+  }
+
+  private void addMod(TableView<ModFile> installed, TableView<ModFile> archived, ModFile mod) {
+    if (mod.archived()) {
+      archived.getItems().add(mod);
+    } else {
+      installed.getItems().add(mod);
+    }
   }
 
   private void uploadMod(
       Context context,
       TableView<ModFile> installed,
       TableView<ModFile> archived,
-      ProgressIndicator progress) {
+      Button checkUpdatesButton) {
     ServerProfile profile = context.profile();
     FileChooser chooser = new FileChooser();
     chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Jar files", "*.jar"));
@@ -164,8 +174,8 @@ class ModsView {
           modService.upload(profile, folder, file.getName(), Files.readAllBytes(file.toPath()));
           return null;
         },
-        ignored -> loadMods(profile, false, installed, archived, progress),
-        error -> progress.setVisible(false),
+        ignored -> loadMods(profile, false, installed, archived, checkUpdatesButton),
+        null,
         null);
   }
 

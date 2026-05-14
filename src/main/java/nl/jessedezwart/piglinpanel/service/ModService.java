@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
 import nl.jessedezwart.piglinpanel.model.FileEntry;
 import nl.jessedezwart.piglinpanel.model.ModFile;
@@ -30,12 +30,11 @@ public class ModService {
   }
 
   public List<ModFile> scan(ServerProfile profile, boolean checkUpdates) throws IOException {
-    return scan(profile, checkUpdates, (done, total) -> {
-    });
+    return scan(profile, checkUpdates, null);
   }
 
   public List<ModFile> scan(
-      ServerProfile profile, boolean checkUpdates, BiConsumer<Integer, Integer> progress)
+      ServerProfile profile, boolean checkUpdates, Consumer<ModFile> onMod)
       throws IOException {
     log.info("Scanning mods for {} (checkUpdates={})", profile.getName(), checkUpdates);
     List<Candidate> candidates = new ArrayList<>();
@@ -48,21 +47,16 @@ public class ModService {
         candidates.add(new Candidate(folder, entry));
       }
     }
-    int total = candidates.size();
-    int done = 0;
-    progress.accept(done, total);
-    List<ModFile> mods = new ArrayList<>(total);
+    List<ModFile> mods = new ArrayList<>(candidates.size());
     for (Candidate candidate : candidates) {
       ModFolder folder = candidate.folder();
       FileEntry entry = candidate.entry();
       String sha1 = null;
-      String sha512 = null;
       if (checkUpdates) {
         try {
           log.info("Hashing mod {}", entry.path());
           byte[] bytes = connectionService.fileSystem(profile).readBytes(entry.path());
           sha1 = digest("SHA-1", bytes);
-          sha512 = digest("SHA-512", bytes);
           log.info("Finished hashing mod {}", entry.path());
         } catch (IOException e) {
           log.warn("Failed to hash mod {}", entry.path(), e);
@@ -81,19 +75,19 @@ public class ModService {
           throw new IOException("Interrupted while checking Modrinth", e);
         }
       }
-      mods.add(
-          new ModFile(
-              folder.getId(),
-              folder.getPath(),
-              entry.path(),
-              entry.name(),
-              entry.size(),
-              archived,
-              sha1,
-              sha512,
-              update));
-      done += 1;
-      progress.accept(done, total);
+      ModFile modFile = new ModFile(
+          folder.getId(),
+          folder.getPath(),
+          entry.path(),
+          entry.name(),
+          entry.size(),
+          archived,
+          sha1,
+          update);
+      mods.add(modFile);
+      if (onMod != null) {
+        onMod.accept(modFile);
+      }
     }
     log.info("Scan complete for {}: {} mods", profile.getName(), mods.size());
     return mods;
