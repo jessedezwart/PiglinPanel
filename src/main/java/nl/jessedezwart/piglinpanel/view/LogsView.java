@@ -9,12 +9,12 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ListView;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
-import jfx.incubator.scene.control.richtext.CodeArea;
 import nl.jessedezwart.piglinpanel.model.FileEntry;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import nl.jessedezwart.piglinpanel.service.FileService;
@@ -32,7 +32,7 @@ class LogsView {
   }
 
   Node create(ServerProfile profile, BooleanSupplier visible) {
-    CodeArea latest = ViewLayout.editor(false);
+    TextArea latest = ViewLayout.editor(false);
     TextField filter = new TextField();
     filter.setPromptText("Filter");
     ListView<FileEntry> files = new ListView<>();
@@ -58,7 +58,7 @@ class LogsView {
   private void startAutoRefresh(
       ServerProfile profile,
       BooleanSupplier visible,
-      CodeArea latest,
+      TextArea latest,
       TextField filter,
       ListView<FileEntry> files,
       CheckBox autoRefresh,
@@ -86,7 +86,7 @@ class LogsView {
   }
 
   private void refreshLogs(
-      ServerProfile profile, CodeArea latest, ListView<FileEntry> files, String filter) {
+      ServerProfile profile, TextArea latest, ListView<FileEntry> files, String filter) {
     UiTasks.run(
         () -> new LogData(logService.latestLog(profile), logService.logFiles(profile)),
         data -> {

@@ -2,11 +2,11 @@ package nl.jessedezwart.piglinpanel.view;
 
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import jfx.incubator.scene.control.richtext.CodeArea;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import nl.jessedezwart.piglinpanel.service.RconService;
 import org.springframework.stereotype.Component;
@@ -20,7 +20,7 @@ class RconView {
   }
 
   Node create(ServerProfile profile) {
-    CodeArea output = ViewLayout.editor(false);
+    TextArea output = ViewLayout.editor(false);
     TextField command = new TextField();
     command.setPromptText("Command");
     Button send = new Button("Send");

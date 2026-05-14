@@ -62,12 +62,6 @@
       <classifier>${javafx.platform}</classifier>
     </dependency>
     <dependency>
-      <groupId>org.openjfx</groupId>
-      <artifactId>jfx-incubator-richtext</artifactId>
-      <version>${javafx.version}</version>
-      <classifier>${javafx.platform}</classifier>
-    </dependency>
-    <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-devtools</artifactId>
       <scope>runtime</scope>

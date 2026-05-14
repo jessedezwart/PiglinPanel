@@ -3,19 +3,19 @@ package nl.jessedezwart.piglinpanel.view;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextArea;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import jfx.incubator.scene.control.richtext.CodeArea;
 
 final class ViewLayout {
   private ViewLayout() {}
 
-  static CodeArea editor(boolean editable) {
-    CodeArea area = new CodeArea();
+  static TextArea editor(boolean editable) {
+    TextArea area = new TextArea();
     area.setWrapText(true);
-    area.setLineNumbersEnabled(true);
     area.setEditable(editable);
+    area.setStyle("-fx-font-family: 'Consolas', 'Courier New', monospace;");
     return area;
   }
 
