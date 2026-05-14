@@ -1,11 +1,14 @@
 package nl.jessedezwart.piglinpanel.view;
 
+import java.time.Instant;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
-import javafx.scene.control.ListView;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TreeCell;
+import javafx.scene.control.TreeItem;
+import javafx.scene.control.TreeView;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
@@ -23,38 +26,70 @@ class FilesView {
   }
 
   Node create(ServerProfile profile) {
-    ListView<FileEntry> files = new ListView<>();
+    FileEntry rootEntry =
+        new FileEntry(
+            "",
+            profile.getRootPath().isBlank() ? "Server root" : profile.getRootPath(),
+            true,
+            0,
+            Instant.EPOCH);
+    FileTreeItem rootItem = new FileTreeItem(new FileNode(rootEntry, false));
+    TreeView<FileNode> files = new TreeView<>(rootItem);
     TextArea editor = ViewLayout.editor(true);
     TextField currentPath = new TextField("");
     Button open = new Button("Open");
     Button up = new Button("Up");
     Button save = new Button("Save");
     final String[] selectedFile = {null};
-    Runnable load =
-        () ->
-            UiTasks.run(
-                () -> fileService.list(profile, currentPath.getText()),
-                entries -> files.getItems().setAll(entries));
+    files.setShowRoot(true);
+    files.setCellFactory(
+        ignored ->
+            new TreeCell<>() {
+              @Override
+              protected void updateItem(FileNode item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                  setText(null);
+                  return;
+                }
+                if (item.placeholder()) {
+                  setText("Loading...");
+                  return;
+                }
+                setText((item.entry().directory() ? "[DIR] " : "") + item.entry().name());
+              }
+            });
+    files
+        .getSelectionModel()
+        .selectedItemProperty()
+        .addListener(
+            (ignored, oldValue, selected) -> {
+              if (selected == null || selected.getValue().placeholder()) {
+                return;
+              }
+              currentPath.setText(selected.getValue().entry().path());
+            });
     open.setOnAction(
         event -> {
-          FileEntry selected = files.getSelectionModel().getSelectedItem();
-          if (selected == null) {
+          TreeItem<FileNode> selected = files.getSelectionModel().getSelectedItem();
+          if (selected == null || selected.getValue().placeholder()) {
             return;
           }
-          if (selected.directory()) {
-            currentPath.setText(selected.path());
-            load.run();
+          FileEntry entry = selected.getValue().entry();
+          if (entry.directory()) {
+            selected.setExpanded(true);
+            loadChildren(profile, selected);
           } else {
-            selectedFile[0] = selected.path();
-            UiTasks.run(() -> fileService.readText(profile, selected.path()), editor::setText);
+            selectedFile[0] = entry.path();
+            UiTasks.run(() -> fileService.readText(profile, entry.path()), editor::setText);
           }
         });
     up.setOnAction(
         event -> {
-          String path = currentPath.getText();
-          int slash = path.lastIndexOf('/');
-          currentPath.setText(slash < 0 ? "" : path.substring(0, slash));
-          load.run();
+          TreeItem<FileNode> selected = files.getSelectionModel().getSelectedItem();
+          if (selected != null && selected.getParent() != null) {
+            files.getSelectionModel().select(selected.getParent());
+          }
         });
     save.setOnAction(
         event -> {
@@ -69,12 +104,58 @@ class FilesView {
             open.fire();
           }
         });
+    rootItem.setExpanded(true);
+    loadChildren(profile, rootItem);
     SplitPane split = new SplitPane(files, editor);
     split.setDividerPositions(0.32);
     VBox box = ViewLayout.contentBox(new HBox(8, up, currentPath, open, save), split);
     HBox.setHgrow(currentPath, Priority.ALWAYS);
     VBox.setVgrow(split, Priority.ALWAYS);
-    load.run();
     return box;
   }
+
+  private void loadChildren(ServerProfile profile, TreeItem<FileNode> item) {
+    if (!(item instanceof FileTreeItem treeItem)
+        || treeItem.loaded
+        || item.getValue().placeholder()) {
+      return;
+    }
+    treeItem.loaded = true;
+    UiTasks.run(
+        () -> fileService.list(profile, item.getValue().entry().path()),
+        entries -> {
+          item.getChildren().setAll(entries.stream().map(this::treeItem).toList());
+          item.getChildren()
+              .forEach(
+                  child ->
+                      child.expandedProperty()
+                          .addListener(
+                              (ignored, wasExpanded, expanded) -> {
+                                if (expanded) {
+                                  loadChildren(profile, child);
+                                }
+                              }));
+        });
+  }
+
+  private FileTreeItem treeItem(FileEntry entry) {
+    FileTreeItem item = new FileTreeItem(new FileNode(entry, false));
+    if (entry.directory()) {
+      item.getChildren()
+          .add(
+              new TreeItem<>(
+                  new FileNode(new FileEntry("", "", false, 0, Instant.EPOCH), true)));
+    }
+    return item;
+  }
+
+  private static final class FileTreeItem extends TreeItem<FileNode> {
+    private boolean loaded;
+
+    private FileTreeItem(FileNode node) {
+      super(node);
+    }
+  }
+
+  private record FileNode(FileEntry entry, boolean placeholder) {}
 }
