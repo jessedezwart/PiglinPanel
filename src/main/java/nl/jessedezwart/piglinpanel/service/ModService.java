@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
+import nl.jessedezwart.piglinpanel.config.ModHashCacheStore;
+import nl.jessedezwart.piglinpanel.filesystem.ServerFileSystem;
 import nl.jessedezwart.piglinpanel.model.FileEntry;
 import nl.jessedezwart.piglinpanel.model.ModFile;
 import nl.jessedezwart.piglinpanel.model.ModFolder;
@@ -23,10 +25,15 @@ public class ModService {
   private static final Logger log = LoggerFactory.getLogger(ModService.class);
   private final ServerConnectionService connectionService;
   private final ModrinthClient modrinthClient;
+  private final ModHashCacheStore modHashCacheStore;
 
-  public ModService(ServerConnectionService connectionService, ModrinthClient modrinthClient) {
+  public ModService(
+      ServerConnectionService connectionService,
+      ModrinthClient modrinthClient,
+      ModHashCacheStore modHashCacheStore) {
     this.connectionService = connectionService;
     this.modrinthClient = modrinthClient;
+    this.modHashCacheStore = modHashCacheStore;
   }
 
   public List<ModFile> scan(ServerProfile profile, boolean checkUpdates) throws IOException {
@@ -37,9 +44,10 @@ public class ModService {
       ServerProfile profile, boolean checkUpdates, Consumer<ModFile> onMod)
       throws IOException {
     log.info("Scanning mods for {} (checkUpdates={})", profile.getName(), checkUpdates);
+    ServerFileSystem fileSystem = connectionService.fileSystem(profile);
     List<Candidate> candidates = new ArrayList<>();
     for (ModFolder folder : profile.getModFolders()) {
-      for (FileEntry entry : connectionService.fileSystem(profile).list(folder.getPath())) {
+      for (FileEntry entry : fileSystem.list(folder.getPath())) {
         if (entry.directory()
             || (!entry.name().endsWith(".jar") && !entry.name().endsWith(".jar.old"))) {
           continue;
@@ -54,10 +62,7 @@ public class ModService {
       String sha1 = null;
       if (checkUpdates) {
         try {
-          log.info("Hashing mod {}", entry.path());
-          byte[] bytes = connectionService.fileSystem(profile).readBytes(entry.path());
-          sha1 = digest("SHA-1", bytes);
-          log.info("Finished hashing mod {}", entry.path());
+          sha1 = resolveSha1(profile, fileSystem, entry);
         } catch (IOException e) {
           log.warn("Failed to hash mod {}", entry.path(), e);
         }
@@ -99,12 +104,16 @@ public class ModService {
   public void upload(ServerProfile profile, ModFolder folder, String fileName, byte[] bytes)
       throws IOException {
     log.info("Uploading {} to {}:{}", fileName, profile.getName(), folder.getPath());
-    connectionService.fileSystem(profile).writeBytes(folder.getPath() + "/" + fileName, bytes);
+    ServerFileSystem fileSystem = connectionService.fileSystem(profile);
+    String relativePath = joinPath(folder.getPath(), fileName);
+    fileSystem.writeBytes(relativePath, bytes);
+    cacheWrittenFile(profile, fileSystem, relativePath, digest("SHA-1", bytes));
   }
 
   public void delete(ServerProfile profile, ModFile modFile) throws IOException {
     log.info("Deleting {} from {}", modFile.relativePath(), profile.getName());
     connectionService.fileSystem(profile).delete(modFile.relativePath());
+    modHashCacheStore.remove(profile, modFile.relativePath());
   }
 
   public void applyUpdate(ServerProfile profile, ModFile modFile) throws IOException {
@@ -117,13 +126,18 @@ public class ModService {
         modFile.fileName(),
         profile.getName(),
         update.latestVersionName());
+    ServerFileSystem fileSystem = connectionService.fileSystem(profile);
     try {
       byte[] bytes = modrinthClient.download(update.downloadUrl());
       String archivedName = nextArchiveName(modFile.relativePath());
-      connectionService.fileSystem(profile).move(modFile.relativePath(), archivedName);
-      connectionService
-          .fileSystem(profile)
-          .writeBytes(modFile.folderPath() + "/" + update.fileName(), bytes);
+      fileSystem.move(modFile.relativePath(), archivedName);
+      modHashCacheStore.move(profile, modFile.relativePath(), archivedName);
+      if (modFile.sha1() != null && !modFile.sha1().isBlank()) {
+        cacheWrittenFile(profile, fileSystem, archivedName, modFile.sha1());
+      }
+      String updatedPath = joinPath(modFile.folderPath(), update.fileName());
+      fileSystem.writeBytes(updatedPath, bytes);
+      cacheWrittenFile(profile, fileSystem, updatedPath, digest("SHA-1", bytes));
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new IOException("Interrupted while downloading mod update", e);
@@ -132,6 +146,51 @@ public class ModService {
 
   static String nextArchiveName(String relativePath) {
     return relativePath.endsWith(".old") ? relativePath : relativePath + ".old";
+  }
+
+  private String resolveSha1(ServerProfile profile, ServerFileSystem fileSystem, FileEntry entry)
+      throws IOException {
+    Optional<String> cached = modHashCacheStore.lookup(profile, entry);
+    if (cached.isPresent()) {
+      log.info("Using cached hash for mod {}", entry.path());
+      return cached.get();
+    }
+    log.info("Hashing mod {}", entry.path());
+    byte[] bytes = fileSystem.readBytes(entry.path());
+    String sha1 = digest("SHA-1", bytes);
+    modHashCacheStore.put(profile, entry, sha1);
+    log.info("Finished hashing mod {}", entry.path());
+    return sha1;
+  }
+
+  private void cacheWrittenFile(
+      ServerProfile profile, ServerFileSystem fileSystem, String relativePath, String sha1)
+      throws IOException {
+    findEntry(fileSystem, relativePath)
+        .ifPresent(entry -> modHashCacheStore.put(profile, entry, sha1));
+  }
+
+  private Optional<FileEntry> findEntry(ServerFileSystem fileSystem, String relativePath)
+      throws IOException {
+    String folderPath = parentPath(relativePath);
+    return fileSystem.list(folderPath).stream()
+        .filter(entry -> relativePath.equals(entry.path()))
+        .findFirst();
+  }
+
+  private static String joinPath(String folderPath, String fileName) {
+    if (folderPath == null || folderPath.isBlank()) {
+      return fileName;
+    }
+    return folderPath.endsWith("/") ? folderPath + fileName : folderPath + "/" + fileName;
+  }
+
+  private static String parentPath(String relativePath) {
+    int slash = relativePath.lastIndexOf('/');
+    if (slash < 0) {
+      return "";
+    }
+    return relativePath.substring(0, slash);
   }
 
   private static String digest(String algorithm, byte[] bytes) throws IOException {

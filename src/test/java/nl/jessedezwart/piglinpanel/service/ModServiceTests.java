@@ -5,12 +5,15 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
+import nl.jessedezwart.piglinpanel.config.ModHashCacheStore;
+import nl.jessedezwart.piglinpanel.filesystem.LocalServerFileSystem;
 import nl.jessedezwart.piglinpanel.model.ModFolder;
 import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
@@ -32,7 +35,11 @@ class ModServiceTests {
         List.of(
             new ModFolder("server", "Server", "mods"),
             new ModFolder("client", "Client", "client-mods")));
-    ModService service = new ModService(new ServerConnectionService(), mock(ModrinthClient.class));
+    ModService service =
+        new ModService(
+            new ServerConnectionService(),
+            mock(ModrinthClient.class),
+            new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json")));
 
     var mods = service.scan(profile, false);
 
@@ -60,7 +67,11 @@ class ModServiceTests {
                     "2.0.0",
                     URI.create("https://example.com/mod.jar"),
                     "mod.jar")));
-    ModService service = new ModService(new ServerConnectionService(), client);
+    ModService service =
+        new ModService(
+            new ServerConnectionService(),
+            client,
+            new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json")));
 
     var mods = service.scan(profile, true);
 
@@ -71,9 +82,73 @@ class ModServiceTests {
   }
 
   @Test
+  void reusesCachedHashWhenFileMetadataStillMatches() throws Exception {
+    Files.createDirectories(tempDir.resolve("mods"));
+    Files.write(tempDir.resolve("mods/server.jar"), new byte[] {1, 2, 3});
+    ServerProfile profile = new ServerProfile();
+    profile.setRootPath(tempDir.toString());
+    CountingLocalServerFileSystem fileSystem = new CountingLocalServerFileSystem(profile);
+    ServerConnectionService connectionService = mock(ServerConnectionService.class);
+    when(connectionService.fileSystem(profile)).thenReturn(fileSystem);
+    ModrinthClient client = mock(ModrinthClient.class);
+    when(client.findSuggestedUpdate(anyString())).thenReturn(Optional.empty());
+    ModService service =
+        new ModService(
+            connectionService,
+            client,
+            new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json")));
+
+    service.scan(profile, true);
+    service.scan(profile, true);
+
+    assertThat(fileSystem.readCount()).isEqualTo(1);
+  }
+
+  @Test
+  void cachesUploadedJarHashClientSide() throws Exception {
+    Files.createDirectories(tempDir.resolve("mods"));
+    ServerProfile profile = new ServerProfile();
+    profile.setRootPath(tempDir.toString());
+    CountingLocalServerFileSystem fileSystem = new CountingLocalServerFileSystem(profile);
+    ServerConnectionService connectionService = mock(ServerConnectionService.class);
+    when(connectionService.fileSystem(profile)).thenReturn(fileSystem);
+    ModrinthClient client = mock(ModrinthClient.class);
+    when(client.findSuggestedUpdate(anyString())).thenReturn(Optional.empty());
+    ModService service =
+        new ModService(
+            connectionService,
+            client,
+            new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json")));
+
+    service.upload(
+        profile, profile.getModFolders().getFirst(), "uploaded.jar", new byte[] {9, 8, 7});
+    service.scan(profile, true);
+
+    assertThat(fileSystem.readCount()).isZero();
+  }
+
+  @Test
   void archiveNameAddsOldSuffix() {
     assertThat(ModService.nextArchiveName("mods/example.jar")).isEqualTo("mods/example.jar.old");
     assertThat(ModService.nextArchiveName("mods/example.jar.old"))
         .isEqualTo("mods/example.jar.old");
+  }
+
+  private static class CountingLocalServerFileSystem extends LocalServerFileSystem {
+    private int readCount;
+
+    CountingLocalServerFileSystem(ServerProfile profile) {
+      super(profile);
+    }
+
+    @Override
+    public byte[] readBytes(String relativePath) throws java.io.IOException {
+      readCount++;
+      return super.readBytes(relativePath);
+    }
+
+    int readCount() {
+      return readCount;
+    }
   }
 }
