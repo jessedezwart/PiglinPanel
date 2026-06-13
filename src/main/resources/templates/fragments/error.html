@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <body>
-<div th:fragment="error-banner" class="error-banner">
+<sl-alert th:fragment="error-banner" variant="danger" open>
   <strong>Error:</strong> <span th:text="${errorMessage}"></span>
-</div>
+</sl-alert>
 </body>
 </html>

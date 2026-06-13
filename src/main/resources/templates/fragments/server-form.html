@@ -1,109 +1,69 @@
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <body>
-<div th:fragment="form" class="modal-box" onclick="event.stopPropagation()">
-  <div style="display:flex; align-items:center; margin-bottom:16px;">
-    <span class="modal-title" th:text="${isNew} ? 'Add Server' : 'Edit Server'"></span>
-    <button type="button" class="modal-close" onclick="document.getElementById('modal').innerHTML=''">&#10005;</button>
-  </div>
+<sl-dialog th:fragment="form"
+           th:attr="label=${isNew} ? 'Add Server' : 'Edit Server'"
+           style="--width: 580px;">
 
-  <form hx-post="/servers"
+  <form id="server-form" class="server-form"
+        hx-post="/servers"
         hx-target="body"
         hx-swap="outerHTML">
 
     <input type="hidden" name="id" th:value="${editProfile.id}">
 
-    <div class="form-group">
-      <label>Server Name</label>
-      <input type="text" name="name" th:value="${editProfile.name}" required>
-    </div>
+    <sl-input label="Server Name" name="name" th:value="${editProfile.name}" required></sl-input>
 
-    <div class="form-group">
-      <label>Access Type</label>
-      <select name="accessType">
-        <option value="LOCAL" th:selected="${editProfile.accessType.name() == 'LOCAL'}">Local</option>
-        <option value="SSH" th:selected="${editProfile.accessType.name() == 'SSH'}">SSH</option>
-      </select>
-    </div>
+    <sl-select label="Access Type" name="accessType" th:value="${editProfile.accessType.name()}">
+      <sl-option value="LOCAL">Local</sl-option>
+      <sl-option value="SSH">SSH</sl-option>
+    </sl-select>
 
-    <div class="form-group">
-      <label>Root Path</label>
-      <input type="text" name="rootPath" th:value="${editProfile.rootPath}" placeholder="/path/to/server">
-    </div>
+    <sl-input label="Root Path" name="rootPath" th:value="${editProfile.rootPath}" placeholder="/path/to/server"></sl-input>
 
-    <div class="form-group">
-      <label>Logs Path (relative to root)</label>
-      <input type="text" name="logsPath" th:value="${editProfile.logsPath}" placeholder="logs">
-    </div>
+    <sl-input label="Logs Path (relative to root)" name="logsPath" th:value="${editProfile.logsPath}" placeholder="logs"></sl-input>
 
-    <div class="form-group">
-      <label>Mod Folders (one per line: Name=path)</label>
-      <textarea name="modFoldersText" rows="4" th:text="${modFoldersText}" placeholder="Server mods=mods"></textarea>
-    </div>
+    <sl-textarea label="Mod Folders (one per line: Name=path)" name="modFoldersText"
+                 rows="4" th:value="${modFoldersText}" placeholder="Server mods=mods"></sl-textarea>
 
+    <sl-divider></sl-divider>
     <p class="form-section-title">SSH</p>
 
     <div class="form-row">
-      <div class="form-group">
-        <label>Host</label>
-        <input type="text" name="sshHost" th:value="${editProfile.ssh.host}">
-      </div>
-      <div class="form-group" style="max-width:100px;">
-        <label>Port</label>
-        <input type="number" name="sshPort" th:value="${editProfile.ssh.port}">
-      </div>
+      <sl-input label="Host" name="sshHost" th:value="${editProfile.ssh.host}"></sl-input>
+      <sl-input label="Port" name="sshPort" type="number" th:value="${editProfile.ssh.port}" style="width:110px; flex:none;"></sl-input>
     </div>
 
-    <div class="form-group">
-      <label>Username</label>
-      <input type="text" name="sshUsername" th:value="${editProfile.ssh.username}">
-    </div>
+    <sl-input label="Username" name="sshUsername" th:value="${editProfile.ssh.username}"></sl-input>
 
-    <div class="form-group">
-      <label>Password</label>
-      <input type="password" name="sshPassword" th:value="${editProfile.ssh.password}" autocomplete="new-password">
-    </div>
+    <sl-input label="Password" name="sshPassword" type="password"
+              th:value="${editProfile.ssh.password}" autocomplete="new-password"></sl-input>
 
-    <div class="form-group">
-      <label>Private Key Path</label>
-      <input type="text" name="sshPrivateKeyPath" th:value="${editProfile.ssh.privateKeyPath}" placeholder="/home/user/.ssh/id_rsa">
-    </div>
+    <sl-input label="Private Key Path" name="sshPrivateKeyPath"
+              th:value="${editProfile.ssh.privateKeyPath}" placeholder="/home/user/.ssh/id_rsa"></sl-input>
 
-    <div class="form-group">
-      <label>Private Key Passphrase</label>
-      <input type="password" name="sshPrivateKeyPassphrase" th:value="${editProfile.ssh.privateKeyPassphrase}" autocomplete="new-password">
-    </div>
+    <sl-input label="Private Key Passphrase" name="sshPrivateKeyPassphrase" type="password"
+              th:value="${editProfile.ssh.privateKeyPassphrase}" autocomplete="new-password"></sl-input>
 
+    <sl-divider></sl-divider>
     <p class="form-section-title">RCON</p>
 
-    <div class="form-group">
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-        <input type="checkbox" name="rconEnabled" value="true" th:checked="${editProfile.rcon.enabled}">
-        Enable RCON
-      </label>
-    </div>
+    <sl-checkbox name="rconEnabled" value="true" th:checked="${editProfile.rcon.enabled}">Enable RCON</sl-checkbox>
 
     <div class="form-row">
-      <div class="form-group">
-        <label>RCON Host</label>
-        <input type="text" name="rconHost" th:value="${editProfile.rcon.host}">
-      </div>
-      <div class="form-group" style="max-width:100px;">
-        <label>Port</label>
-        <input type="number" name="rconPort" th:value="${editProfile.rcon.port}">
-      </div>
+      <sl-input label="RCON Host" name="rconHost" th:value="${editProfile.rcon.host}"></sl-input>
+      <sl-input label="Port" name="rconPort" type="number" th:value="${editProfile.rcon.port}" style="width:110px; flex:none;"></sl-input>
     </div>
 
-    <div class="form-group">
-      <label>RCON Password</label>
-      <input type="password" name="rconPassword" th:value="${editProfile.rcon.password}" autocomplete="new-password">
-    </div>
-
-    <div class="modal-actions">
-      <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal').innerHTML=''">Cancel</button>
-      <button type="submit" class="btn btn-primary" th:text="${isNew} ? 'Add Server' : 'Save Changes'"></button>
-    </div>
+    <sl-input label="RCON Password" name="rconPassword" type="password"
+              th:value="${editProfile.rcon.password}" autocomplete="new-password"></sl-input>
   </form>
-</div>
+
+  <div slot="footer" style="display:flex; gap:8px; justify-content:flex-end;">
+    <sl-button onclick="this.closest('sl-dialog').hide()">Cancel</sl-button>
+    <sl-button variant="primary" type="submit" form="server-form"
+               th:text="${isNew} ? 'Add Server' : 'Save Changes'"></sl-button>
+  </div>
+</sl-dialog>
 </body>
 </html>

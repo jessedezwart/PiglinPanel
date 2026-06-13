@@ -62,18 +62,16 @@
   <div th:if="${isBinary}">
     <div class="editor-toolbar">
       <span class="editor-path" th:text="${openPath}"></span>
-      <a class="btn btn-sm"
-         th:href="'/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
+      <sl-button size="small"
+                 th:attr="href='/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
         Download
-      </a>
+      </sl-button>
     </div>
     <div class="empty-state">Binary file — download to view.</div>
   </div>
 
   <div th:unless="${isBinary}">
-    <div th:if="${saved}" class="error-banner" style="background: rgba(76,175,80,0.15); border-color: var(--success); color: #a5d6a7;">
-      Saved.
-    </div>
+    <sl-alert th:if="${saved}" variant="success" open style="margin-bottom: 8px;">Saved.</sl-alert>
     <form th:if="${fileContent != null}"
           hx-post="/files/save"
           hx-target="#editor-pane"
@@ -82,11 +80,11 @@
       <input type="hidden" name="path" th:value="${openPath}">
       <div class="editor-toolbar">
         <span class="editor-path" th:text="${openPath}"></span>
-        <button type="submit" class="btn btn-sm btn-primary">Save</button>
-        <a class="btn btn-sm"
-           th:href="'/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
+        <sl-button size="small" variant="primary" type="submit">Save</sl-button>
+        <sl-button size="small"
+                   th:attr="href='/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
           Download
-        </a>
+        </sl-button>
       </div>
       <textarea name="content" class="editor" th:text="${fileContent}"></textarea>
     </form>

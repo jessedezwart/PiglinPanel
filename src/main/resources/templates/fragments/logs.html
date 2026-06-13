@@ -27,9 +27,7 @@
     </div>
     <div class="split-right">
       <div class="log-filter">
-        <input type="text" placeholder="Filter..." th:value="${filter}"
-               id="log-filter-input"
-               oninput="updateLogFilter(this.value)">
+        <sl-input id="log-filter-input" placeholder="Filter..." th:value="${filter}" size="small" clearable></sl-input>
       </div>
       <div th:replace="~{fragments/logs :: log-content}"></div>
     </div>
@@ -43,6 +41,12 @@
       el.setAttribute('hx-vals', JSON.stringify({serverId: _logServerId, filter: value}));
       htmx.trigger(el, 'updateFilter');
     }
+    document.getElementById('log-filter-input')?.addEventListener('sl-input', function (e) {
+      updateLogFilter(e.target.value);
+    });
+    document.getElementById('log-filter-input')?.addEventListener('sl-clear', function () {
+      updateLogFilter('');
+    });
   </script>
 </div>
 

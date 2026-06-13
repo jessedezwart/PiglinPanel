@@ -17,8 +17,8 @@
           hx-on::after-request="this.reset()">
       <input type="hidden" name="serverId" th:value="${serverId}">
       <div class="rcon-input">
-        <input type="text" name="command" placeholder="Enter command..." autofocus autocomplete="off">
-        <button type="submit" class="btn btn-primary">Send</button>
+        <sl-input name="command" placeholder="Enter command..." autofocus autocomplete="off"></sl-input>
+        <sl-button variant="primary" type="submit">Send</sl-button>
       </div>
     </form>
     <div id="rcon-error"></div>
@@ -34,6 +34,6 @@
 
 <span th:fragment="command-ok"></span>
 
-<div th:fragment="command-error" class="error-banner" th:text="${errorMessage}"></div>
+<sl-alert th:fragment="command-error" variant="danger" open th:text="${errorMessage}"></sl-alert>
 </body>
 </html>

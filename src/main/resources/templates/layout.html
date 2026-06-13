@@ -1,43 +1,42 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html xmlns:th="http://www.thymeleaf.org" class="sl-theme-dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Piglinpanel</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/themes/dark.css" />
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/shoelace-autoloader.js"></script>
   <link rel="stylesheet" th:href="@{/css/main.css}">
   <script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
 </head>
-<body>
+<body class="sl-theme-dark">
 
 <header class="topbar">
   <span class="app-name">Piglinpanel</span>
 
   <div class="server-selector">
-    <select id="server-select" onchange="selectServer(this.value)" th:if="${not #lists.isEmpty(servers)}">
-      <option th:each="s : ${servers}"
-              th:value="${s.id}"
-              th:text="${s.name}"
-              th:selected="${s.id == serverId}"></option>
-    </select>
+    <sl-select id="server-select" size="small" th:if="${not #lists.isEmpty(servers)}" th:value="${serverId}">
+      <sl-option th:each="s : ${servers}" th:value="${s.id}" th:text="${s.name}"></sl-option>
+    </sl-select>
     <span th:if="${#lists.isEmpty(servers)}" class="no-servers">No servers</span>
   </div>
 
   <div class="server-actions">
-    <button class="btn btn-sm"
-            hx-get="/servers/new-form"
-            hx-target="#modal"
-            hx-swap="innerHTML">+ Add server</button>
-    <button class="btn btn-sm btn-secondary"
-            th:if="${profile != null}"
-            hx-get="/servers/edit-form"
-            hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'
-            hx-target="#modal"
-            hx-swap="innerHTML">Edit</button>
-    <button class="btn btn-sm btn-danger"
-            th:if="${profile != null}"
-            hx-post="/servers/__${profile.id}__/delete"
-            hx-confirm="Delete this server?"
-            hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'>Delete</button>
+    <sl-button size="small"
+               hx-get="/servers/new-form"
+               hx-target="#modal"
+               hx-swap="innerHTML">+ Add server</sl-button>
+    <sl-button size="small" variant="default"
+               th:if="${profile != null}"
+               hx-get="/servers/edit-form"
+               hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'
+               hx-target="#modal"
+               hx-swap="innerHTML">Edit</sl-button>
+    <sl-button size="small" variant="danger"
+               th:if="${profile != null}"
+               hx-post="/servers/__${profile.id}__/delete"
+               hx-confirm="Delete this server?"
+               hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'>Delete</sl-button>
   </div>
 </header>
 
@@ -76,14 +75,21 @@
     return sel ? sel.value : _serverId;
   }
 
-  function selectServer(id) {
-    window.location.href = '/servers/select?serverId=' + encodeURIComponent(id);
+  const serverSelect = document.getElementById('server-select');
+  if (serverSelect) {
+    serverSelect.addEventListener('sl-change', function () {
+      window.location.href = '/servers/select?serverId=' + encodeURIComponent(this.value);
+    });
   }
 
-  document.addEventListener('click', function(e) {
-    if (e.target.closest('#modal') === null && document.querySelector('#modal .modal-box')) {
-      document.getElementById('modal').innerHTML = '';
-    }
+  document.getElementById('modal').addEventListener('htmx:afterSwap', async function () {
+    const dialog = this.querySelector('sl-dialog');
+    if (!dialog) return;
+    await customElements.whenDefined('sl-dialog');
+    dialog.show();
+    dialog.addEventListener('sl-after-hide', () => {
+      this.innerHTML = '';
+    }, { once: true });
   });
 </script>
 
