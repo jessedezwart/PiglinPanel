@@ -10,17 +10,21 @@
            th:value="${not #lists.isEmpty(profile.modFolders) ? profile.modFolders[0].id : ''}">
 
     <div class="toolbar">
-      <sl-button size="small" variant="primary"
+      <wa-button size="small" variant="primary"
                  hx-post="/mods/check-updates"
                  hx-include="#mods-server-id"
                  hx-target="#content"
                  hx-swap="innerHTML"
                  hx-indicator="#mods-spinner">
+        <wa-icon slot="prefix" name="arrows-rotate"></wa-icon>
         Check updates
-      </sl-button>
-      <sl-spinner id="mods-spinner" class="htmx-indicator" style="--size: 16px; --track-width: 2px;"></sl-spinner>
+      </wa-button>
+      <wa-spinner id="mods-spinner" class="htmx-indicator" style="--size: 16px; --track-width: 2px;"></wa-spinner>
 
-      <sl-button size="small" id="upload-mod-btn">Upload mod</sl-button>
+      <wa-button size="small" id="upload-mod-btn">
+        <wa-icon slot="prefix" name="upload"></wa-icon>
+        Upload mod
+      </wa-button>
       <input id="mod-upload-input" type="file" accept=".jar" style="display:none"
              hx-post="/mods/upload"
              hx-encoding="multipart/form-data"
@@ -29,24 +33,26 @@
              hx-swap="innerHTML"
              name="file">
 
-      <sl-button th:if="${mods != null and not #lists.isEmpty(mods)}"
+      <wa-button th:if="${mods != null and not #lists.isEmpty(mods)}"
                  id="btn-delete" size="small" variant="danger" disabled
                  hx-post="/mods/delete"
                  hx-include="#mods-form"
                  hx-confirm="Delete selected mods?"
                  hx-target="#content"
                  hx-swap="innerHTML">
+        <wa-icon slot="prefix" name="trash"></wa-icon>
         Delete selected
-      </sl-button>
-      <sl-button th:if="${mods != null and not #lists.isEmpty(mods)}"
+      </wa-button>
+      <wa-button th:if="${mods != null and not #lists.isEmpty(mods)}"
                  id="btn-update" size="small" variant="success" disabled
                  hx-post="/mods/update"
                  hx-include="#mods-form"
                  hx-confirm="Update selected mods?"
                  hx-target="#content"
                  hx-swap="innerHTML">
+        <wa-icon slot="prefix" name="cloud-arrow-down"></wa-icon>
         Update selected
-      </sl-button>
+      </wa-button>
     </div>
 
     <div th:if="${mods == null or #lists.isEmpty(mods)}" class="empty-state">No mods found.</div>
@@ -68,14 +74,14 @@
             <td><input class="mod-checkbox" type="checkbox" name="modPaths" th:value="${modFile.relativePath}"></td>
             <td>
               <span th:text="${modFile.fileName}"></span>
-              <sl-badge th:if="${modFile.archived}" variant="neutral">archived</sl-badge>
+              <wa-badge th:if="${modFile.archived}" variant="neutral">archived</wa-badge>
             </td>
             <td th:text="${modFile.folderName}"></td>
             <td th:text="${#numbers.formatDecimal(modFile.size / 1024.0, 1, 1) + ' KB'}"></td>
             <td>
-              <sl-badge th:if="${modFile.update != null and modFile.update.available()}"
+              <wa-badge th:if="${modFile.update != null and modFile.update.available()}"
                         variant="warning"
-                        th:text="${modFile.update.latestVersionName()}"></sl-badge>
+                        th:text="${modFile.update.latestVersionName()}"></wa-badge>
               <span th:if="${modFile.update != null and modFile.update.projectName() != null and not modFile.update.available()}"
                     style="color: var(--text-dim); font-size: 0.85rem;"
                     th:text="${modFile.update.projectName()}"></span>

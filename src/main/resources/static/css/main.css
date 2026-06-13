@@ -44,7 +44,8 @@ body {
   min-width: 160px;
   font-size: 0.9rem;
 }
-#server-select::part(combobox) {
+#server-select::part(combobox),
+#server-select::part(display-input) {
   background: var(--bg3);
   border-color: var(--border);
   color: var(--text);
@@ -176,12 +177,12 @@ textarea.editor {
   overflow-y: auto; max-height: calc(100vh - 200px);
 }
 .rcon-input { display: flex; gap: 8px; margin-top: 10px; align-items: flex-end; }
-.rcon-input sl-input { flex: 1; }
+.rcon-input wa-input { flex: 1; }
 
-/* HTMX loading indicator with sl-spinner */
-sl-spinner.htmx-indicator { display: none; }
-.htmx-request sl-spinner.htmx-indicator,
-sl-spinner.htmx-request.htmx-indicator { display: inline-block; }
+/* HTMX loading indicator with wa-spinner */
+wa-spinner.htmx-indicator { display: none; }
+.htmx-request wa-spinner.htmx-indicator,
+wa-spinner.htmx-request.htmx-indicator { display: inline-block; }
 
 /* Empty state */
 .empty-state { color: var(--text-dim); font-size: 0.9rem; padding: 40px; text-align: center; }

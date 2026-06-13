@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Piglin Panel</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/themes/light.css" crossorigin="anonymous" />
-  <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/shoelace-autoloader.js" integrity="sha384-of8LXlkyMCAT14b4mQEBHRclQhowQAA+z328bANMFZBR6em9yjBEmyaeq59nXe/x" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.0.0/dist-cdn/styles/themes/default.css">
+  <script type="module" src="https://cdn.jsdelivr.net/npm/@awesome.me/webawesome@3.0.0/dist-cdn/webawesome.loader.js"></script>
   <link rel="stylesheet" th:href="@{/css/main.css}">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/atom-one-light.min.css">
   <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
@@ -62,28 +62,37 @@
   <span class="app-name">Piglin Panel</span>
 
   <div class="server-selector">
-    <sl-select id="server-select" size="small" th:if="${not #lists.isEmpty(servers)}" th:value="${serverId}">
-      <sl-option th:each="s : ${servers}" th:value="${s.id}" th:text="${s.name}"></sl-option>
-    </sl-select>
+    <wa-select id="server-select" size="small" th:if="${not #lists.isEmpty(servers)}" th:value="${serverId}">
+      <wa-option th:each="s : ${servers}" th:value="${s.id}" th:text="${s.name}"></wa-option>
+    </wa-select>
     <span th:if="${#lists.isEmpty(servers)}" class="no-servers">No servers</span>
   </div>
 
   <div class="server-actions">
-    <sl-button size="small"
+    <wa-button size="small"
                hx-get="/servers/new-form"
                hx-target="#modal"
-               hx-swap="innerHTML">+ Add server</sl-button>
-    <sl-button size="small" variant="default"
+               hx-swap="innerHTML">
+      <wa-icon slot="prefix" name="plus"></wa-icon>
+      Add server
+    </wa-button>
+    <wa-button size="small" variant="neutral"
                th:if="${profile != null}"
                hx-get="/servers/edit-form"
                hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'
                hx-target="#modal"
-               hx-swap="innerHTML">Edit</sl-button>
-    <sl-button size="small" variant="danger"
+               hx-swap="innerHTML">
+      <wa-icon slot="prefix" name="pen"></wa-icon>
+      Edit
+    </wa-button>
+    <wa-button size="small" variant="danger"
                th:if="${profile != null}"
                hx-post="/servers/__${profile.id}__/delete"
                hx-confirm="Delete this server?"
-               hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'>Delete</sl-button>
+               hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'>
+      <wa-icon slot="prefix" name="trash"></wa-icon>
+      Delete
+    </wa-button>
   </div>
 </header>
 
@@ -124,7 +133,7 @@
 
   const serverSelect = document.getElementById('server-select');
   if (serverSelect) {
-    serverSelect.addEventListener('sl-change', function () {
+    serverSelect.addEventListener('wa-change', function () {
       window.location.href = '/servers/select?serverId=' + encodeURIComponent(this.value);
     });
   }
@@ -138,11 +147,11 @@
   });
 
   document.getElementById('modal').addEventListener('htmx:afterSwap', async function () {
-    const dialog = this.querySelector('sl-dialog');
+    const dialog = this.querySelector('wa-dialog');
     if (!dialog) return;
-    await customElements.whenDefined('sl-dialog');
+    await customElements.whenDefined('wa-dialog');
     dialog.show();
-    dialog.addEventListener('sl-after-hide', () => {
+    dialog.addEventListener('wa-after-hide', () => {
       this.innerHTML = '';
     }, { once: true });
   });

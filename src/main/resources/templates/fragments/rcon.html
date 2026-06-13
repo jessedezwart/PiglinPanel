@@ -17,8 +17,11 @@
           hx-on::after-request="this.reset()">
       <input type="hidden" name="serverId" th:value="${serverId}">
       <div class="rcon-input">
-        <sl-input name="command" placeholder="Enter command..." autofocus autocomplete="off"></sl-input>
-        <sl-button variant="primary" type="submit">Send</sl-button>
+        <wa-input name="command" placeholder="Enter command..." autofocus autocomplete="off"></wa-input>
+        <wa-button variant="primary" type="submit">
+          Send
+          <wa-icon slot="suffix" name="paper-plane"></wa-icon>
+        </wa-button>
       </div>
     </form>
     <div id="rcon-error"></div>
@@ -34,6 +37,9 @@
 
 <span th:fragment="command-ok"></span>
 
-<sl-alert th:fragment="command-error" variant="danger" open th:text="${errorMessage}"></sl-alert>
+<wa-alert th:fragment="command-error" variant="danger" open>
+  <wa-icon slot="icon" name="circle-exclamation"></wa-icon>
+  <span th:text="${errorMessage}"></span>
+</wa-alert>
 </body>
 </html>

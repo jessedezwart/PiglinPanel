@@ -28,7 +28,7 @@
     </div>
     <div class="split-right">
       <div class="log-filter">
-        <sl-input id="log-filter-input" placeholder="Filter..." th:value="${filter}" size="small" clearable></sl-input>
+        <wa-input id="log-filter-input" placeholder="Filter..." th:value="${filter}" size="small" clearable></wa-input>
       </div>
       <div th:replace="~{fragments/logs :: log-content}"></div>
     </div>
@@ -126,10 +126,10 @@
       }
     }
 
-    document.getElementById('log-filter-input')?.addEventListener('sl-input', function(e) {
+    document.getElementById('log-filter-input')?.addEventListener('wa-input', function(e) {
       updateLogFilter(e.target.value);
     });
-    document.getElementById('log-filter-input')?.addEventListener('sl-clear', function() {
+    document.getElementById('log-filter-input')?.addEventListener('wa-clear', function() {
       updateLogFilter('');
     });
 
