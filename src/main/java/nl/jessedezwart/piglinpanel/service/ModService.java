@@ -9,6 +9,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
 import nl.jessedezwart.piglinpanel.config.ModHashCacheStore;
@@ -28,6 +29,7 @@ public class ModService {
   private final ServerConnectionService connectionService;
   private final ModrinthClient modrinthClient;
   private final ModHashCacheStore modHashCacheStore;
+  private final Map<String, Map<String, ModUpdate>> cachedUpdates = new ConcurrentHashMap<>();
 
   public ModService(
       ServerConnectionService connectionService,
@@ -81,6 +83,7 @@ public class ModService {
       }
       ModFile modFile = new ModFile(
           folder.getId(),
+          folder.getName(),
           folder.getPath(),
           entry.path(),
           entry.name(),
@@ -88,19 +91,43 @@ public class ModService {
           archived,
           sha1,
           update);
-      mods.add(modFile);
-      if (onMod != null && !checkUpdates) {
-        onMod.accept(modFile);
+      if (!archived) {
+        mods.add(modFile);
+        if (onMod != null && !checkUpdates) {
+          onMod.accept(modFile);
+        }
       }
     }
     if (checkUpdates && !lookupCandidates.isEmpty()) {
       applySuggestedUpdates(profile, mods, lookupCandidates);
+      Map<String, ModUpdate> profileUpdates = new ConcurrentHashMap<>();
+      for (ModFile mod : mods) {
+        if (mod.update() != null) {
+          profileUpdates.put(mod.relativePath(), mod.update());
+        }
+      }
+      cachedUpdates.put(profile.getId(), profileUpdates);
     }
     if (checkUpdates && onMod != null) {
       mods.forEach(onMod);
     }
     log.info("Scan complete for {}: {} mods", profile.getName(), mods.size());
     return mods;
+  }
+
+  public List<ModFile> scanForUpdate(ServerProfile profile) throws IOException {
+    Map<String, ModUpdate> profileUpdates = cachedUpdates.get(profile.getId());
+    if (profileUpdates == null || profileUpdates.isEmpty()) {
+      return scan(profile, true);
+    }
+    List<ModFile> mods = scan(profile, false);
+    return mods.stream().map(mod -> {
+      ModUpdate update = profileUpdates.get(mod.relativePath());
+      if (update == null) return mod;
+      return new ModFile(mod.folderId(), mod.folderName(), mod.folderPath(),
+          mod.relativePath(), mod.fileName(), mod.size(), mod.archived(),
+          mod.sha1(), update);
+    }).toList();
   }
 
   private record Candidate(ModFolder folder, FileEntry entry) {
@@ -188,6 +215,7 @@ public class ModService {
           index,
           new ModFile(
               mod.folderId(),
+              mod.folderName(),
               mod.folderPath(),
               mod.relativePath(),
               mod.fileName(),

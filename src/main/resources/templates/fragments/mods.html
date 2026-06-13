@@ -5,8 +5,12 @@
   <div th:if="${profile == null}" class="empty-state">No server selected.</div>
 
   <div th:if="${profile != null}">
+    <input type="hidden" id="mods-server-id" name="serverId" th:value="${serverId}">
+    <input type="hidden" id="mods-folder-id" name="folderId"
+           th:value="${not #lists.isEmpty(profile.modFolders) ? profile.modFolders[0].id : ''}">
+
     <div class="toolbar">
-      <sl-button variant="primary"
+      <sl-button size="small" variant="primary"
                  hx-post="/mods/check-updates"
                  hx-include="#mods-server-id"
                  hx-target="#content"
@@ -24,77 +28,100 @@
              hx-target="#content"
              hx-swap="innerHTML"
              name="file">
-    </div>
 
-    <input type="hidden" id="mods-server-id" name="serverId" th:value="${serverId}">
-    <input type="hidden" id="mods-folder-id" name="folderId"
-           th:value="${not #lists.isEmpty(profile.modFolders) ? profile.modFolders[0].id : ''}">
-
-    <div th:replace="~{fragments/mods :: mods-table}"></div>
-  </div>
-
-  <script>
-    document.getElementById('upload-mod-btn')?.addEventListener('click', () => {
-      document.getElementById('mod-upload-input').click();
-    });
-  </script>
-</div>
-
-<div th:fragment="mods-table">
-  <div th:if="${mods == null or #lists.isEmpty(mods)}" class="empty-state">No mods found.</div>
-
-  <form th:if="${mods != null and not #lists.isEmpty(mods)}"
-        hx-post="/mods/delete"
-        hx-target="#content"
-        hx-swap="innerHTML"
-        hx-confirm="Delete selected mods?">
-    <input type="hidden" name="serverId" th:value="${serverId}">
-    <div class="toolbar" style="margin-top: 0; margin-bottom: 10px;">
-      <sl-button type="submit" size="small" variant="danger">Delete selected</sl-button>
-
-      <sl-button type="button" size="small" variant="success"
-                 hx-post="/mods/update"
-                 hx-include="form"
+      <sl-button th:if="${mods != null and not #lists.isEmpty(mods)}"
+                 id="btn-delete" size="small" variant="danger" disabled
+                 hx-post="/mods/delete"
+                 hx-include="#mods-form"
+                 hx-confirm="Delete selected mods?"
                  hx-target="#content"
-                 hx-swap="innerHTML"
-                 hx-confirm="Update selected mods?">
+                 hx-swap="innerHTML">
+        Delete selected
+      </sl-button>
+      <sl-button th:if="${mods != null and not #lists.isEmpty(mods)}"
+                 id="btn-update" size="small" variant="success" disabled
+                 hx-post="/mods/update"
+                 hx-include="#mods-form"
+                 hx-confirm="Update selected mods?"
+                 hx-target="#content"
+                 hx-swap="innerHTML">
         Update selected
       </sl-button>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th style="width:32px"></th>
-          <th>File</th>
-          <th>Folder</th>
-          <th>Size</th>
-          <th>Update</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr th:each="modFile : ${mods}">
-          <td><input type="checkbox" name="modPaths" th:value="${modFile.relativePath}"></td>
-          <td>
-            <span th:text="${modFile.fileName}"></span>
-            <sl-badge th:if="${modFile.archived}" variant="neutral">archived</sl-badge>
-          </td>
-          <td th:text="${modFile.folderId}"></td>
-          <td th:text="${#numbers.formatDecimal(modFile.size / 1024.0, 1, 1) + ' KB'}"></td>
-          <td>
-            <sl-badge th:if="${modFile.update != null and modFile.update.available()}"
-                      variant="warning"
-                      th:text="${modFile.update.latestVersionName()}"></sl-badge>
-            <span th:if="${modFile.update != null and modFile.update.projectName() != null and not modFile.update.available()}"
-                  style="color: var(--text-dim); font-size: 0.85rem;"
-                  th:text="${modFile.update.projectName()}"></span>
-            <span th:if="${modFile.update == null}"
-                  style="color: var(--text-dim);">—</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </form>
+    <div th:if="${mods == null or #lists.isEmpty(mods)}" class="empty-state">No mods found.</div>
+
+    <form id="mods-form" th:if="${mods != null and not #lists.isEmpty(mods)}">
+      <input type="hidden" name="serverId" th:value="${serverId}">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px"><input id="cb-select-all" type="checkbox" title="Select all"></th>
+            <th>File</th>
+            <th>Folder</th>
+            <th>Size</th>
+            <th>Update</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr th:each="modFile : ${mods}">
+            <td><input class="mod-checkbox" type="checkbox" name="modPaths" th:value="${modFile.relativePath}"></td>
+            <td>
+              <span th:text="${modFile.fileName}"></span>
+              <sl-badge th:if="${modFile.archived}" variant="neutral">archived</sl-badge>
+            </td>
+            <td th:text="${modFile.folderName}"></td>
+            <td th:text="${#numbers.formatDecimal(modFile.size / 1024.0, 1, 1) + ' KB'}"></td>
+            <td>
+              <sl-badge th:if="${modFile.update != null and modFile.update.available()}"
+                        variant="warning"
+                        th:text="${modFile.update.latestVersionName()}"></sl-badge>
+              <span th:if="${modFile.update != null and modFile.update.projectName() != null and not modFile.update.available()}"
+                    style="color: var(--text-dim); font-size: 0.85rem;"
+                    th:text="${modFile.update.projectName()}"></span>
+              <span th:if="${modFile.update == null}"
+                    style="color: var(--text-dim);">—</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </form>
+
+    <script>
+      document.getElementById('upload-mod-btn')?.addEventListener('click', () => {
+        document.getElementById('mod-upload-input').click();
+      });
+
+      (function () {
+        const form = document.getElementById('mods-form');
+        if (!form) return;
+        const btnDelete = document.getElementById('btn-delete');
+        const btnUpdate = document.getElementById('btn-update');
+        const cbAll = document.getElementById('cb-select-all');
+
+        function syncButtons() {
+          const checkboxes = form.querySelectorAll('.mod-checkbox');
+          const checked = form.querySelectorAll('.mod-checkbox:checked');
+          const anyChecked = checked.length > 0;
+          if (btnDelete) btnDelete.disabled = !anyChecked;
+          if (btnUpdate) btnUpdate.disabled = !anyChecked;
+          if (cbAll) {
+            cbAll.checked = anyChecked && checked.length === checkboxes.length;
+            cbAll.indeterminate = anyChecked && checked.length < checkboxes.length;
+          }
+        }
+
+        form.addEventListener('change', function (e) {
+          if (e.target.classList.contains('mod-checkbox')) syncButtons();
+        });
+
+        cbAll?.addEventListener('change', function () {
+          form.querySelectorAll('.mod-checkbox').forEach(cb => cb.checked = cbAll.checked);
+          syncButtons();
+        });
+      })();
+    </script>
+  </div>
 </div>
 </body>
 </html>

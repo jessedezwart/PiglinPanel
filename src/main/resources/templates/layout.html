@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" class="sl-theme-dark">
+<html xmlns:th="http://www.thymeleaf.org">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Piglinpanel</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/themes/dark.css" integrity="sha384-GWYIqFA394qpD/MvZTDi2pLPBjEux2y3wDvsvEa/s+DXOt1YxPYCRsisFUKlaJf/" crossorigin="anonymous" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/themes/light.css" crossorigin="anonymous" />
   <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/shoelace-autoloader.js" integrity="sha384-of8LXlkyMCAT14b4mQEBHRclQhowQAA+z328bANMFZBR6em9yjBEmyaeq59nXe/x" crossorigin="anonymous"></script>
   <link rel="stylesheet" th:href="@{/css/main.css}">
   <script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
 </head>
-<body class="sl-theme-dark">
+<body>
 
 <header class="topbar">
   <span class="app-name">Piglinpanel</span>
@@ -81,6 +81,14 @@
       window.location.href = '/servers/select?serverId=' + encodeURIComponent(this.value);
     });
   }
+
+  document.body.addEventListener('htmx:pushedIntoHistory', function () {
+    const path = window.location.pathname;
+    document.querySelectorAll('.nav-link').forEach(link => {
+      const target = link.getAttribute('hx-get');
+      link.classList.toggle('active', target === path);
+    });
+  });
 
   document.getElementById('modal').addEventListener('htmx:afterSwap', async function () {
     const dialog = this.querySelector('sl-dialog');

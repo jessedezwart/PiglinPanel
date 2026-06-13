@@ -1,48 +1,17 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #1a1a2e;
-  --bg2: #16213e;
-  --bg3: #0f3460;
-  --accent: #e94560;
-  --accent2: #533483;
-  --text: #e0e0e0;
-  --text-dim: #8a8a9a;
-  --border: #2a2a4a;
-  --success: #4caf50;
-  --warning: #ff9800;
-  --danger: #f44336;
+  --bg:  #ffffff;
+  --bg2: #f7f9fc;
+  --bg3: #edf2f7;
+  --accent: #f69899;
+  --accent2: #F6C598;
   --font: system-ui, -apple-system, sans-serif;
   --mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
 
-/* Shoelace dark theme token overrides */
-.sl-theme-dark {
-  --sl-color-primary-400: #f05a75;
-  --sl-color-primary-500: #e94560;
-  --sl-color-primary-600: #c73652;
-  --sl-color-primary-700: #a52844;
-
-  --sl-input-background-color: var(--bg2);
-  --sl-input-background-color-hover: var(--bg3);
-  --sl-input-background-color-focus: var(--bg3);
-  --sl-input-border-color: var(--border);
-  --sl-input-border-color-hover: var(--border);
-  --sl-input-border-color-focus: var(--accent2);
-  --sl-input-color: var(--text);
-  --sl-input-placeholder-color: var(--text-dim);
-  --sl-input-label-color: var(--text-dim);
-  --sl-input-focus-ring-color: var(--accent2);
-
-  --sl-panel-background-color: var(--bg2);
-  --sl-panel-border-color: var(--border);
-  --sl-overlay-background-color: rgba(0, 0, 0, 0.65);
-}
-
 body {
   font-family: var(--font);
-  background: var(--bg);
-  color: var(--text);
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -67,7 +36,8 @@ body {
   margin-right: 8px;
 }
 .no-servers { color: var(--text-dim); font-size: 0.9rem; }
-.server-actions { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+.server-selector { margin-left: auto; }
+.server-actions { display: flex; gap: 8px; align-items: center; }
 
 /* Topbar server selector sizing */
 #server-select {
@@ -209,9 +179,9 @@ textarea.editor {
 .rcon-input sl-input { flex: 1; }
 
 /* HTMX loading indicator with sl-spinner */
-sl-spinner.htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+sl-spinner.htmx-indicator { display: none; }
 .htmx-request sl-spinner.htmx-indicator,
-sl-spinner.htmx-request.htmx-indicator { opacity: 1; }
+sl-spinner.htmx-request.htmx-indicator { display: inline-block; }
 
 /* Empty state */
 .empty-state { color: var(--text-dim); font-size: 0.9rem; padding: 40px; text-align: center; }

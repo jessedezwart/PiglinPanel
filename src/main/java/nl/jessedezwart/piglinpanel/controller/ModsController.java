@@ -63,7 +63,7 @@ public class ModsController extends BaseController {
     populateLayout(model, serverId, "mods");
     ServerProfile profile = resolveServer(serverId);
     if (profile != null && modPaths != null) {
-      List<ModFile> allMods = modService.scan(profile, true);
+      List<ModFile> allMods = modService.scanForUpdate(profile);
       for (ModFile mod : allMods) {
         if (modPaths.contains(mod.relativePath()) && mod.update() != null && mod.update().available()) {
           modService.applyUpdate(profile, mod);
