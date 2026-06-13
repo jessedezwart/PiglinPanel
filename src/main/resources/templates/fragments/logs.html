@@ -12,6 +12,7 @@
              th:hx-vals='|{"serverId": "${serverId}", "filter": ""}|'
              hx-target="#log-content"
              hx-swap="outerHTML"
+             data-ws-latest
              th:classappend="${currentLogPath == 'latest.log'} ? ' active'">
             latest.log
           </a>
@@ -35,26 +36,148 @@
 
   <script th:inline="javascript">
     const _logServerId = /*[[${serverId}]]*/ '';
-    function updateLogFilter(value) {
+    let _viewingLatest = /*[[${isLatest}]]*/ false;
+    let _logFilter = /*[[${filter}]]*/ '';
+    let _logWs = null;
+    let _logAtBottom = true;
+    let _logScrollTop = 0;
+    let _logScrollContainer = null;
+
+    function getLogScrollContainer() {
+      const el = document.getElementById('log-content');
+      if (!el) return null;
+      let node = el.parentElement;
+      while (node && node !== document.body) {
+        const style = getComputedStyle(node);
+        if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight) {
+          return node;
+        }
+        node = node.parentElement;
+      }
+      return document.scrollingElement || document.documentElement;
+    }
+
+    function saveLogScroll() {
+      const c = getLogScrollContainer();
+      _logScrollContainer = c;
+      if (!c) return;
+      _logScrollTop = c.scrollTop;
+      _logAtBottom = c.scrollHeight - c.scrollTop - c.clientHeight < 50;
+    }
+
+    function restoreLogScroll() {
+      if (!_logScrollContainer) return;
+      if (_logAtBottom) {
+        _logScrollContainer.scrollTop = _logScrollContainer.scrollHeight;
+      } else {
+        _logScrollContainer.scrollTop = _logScrollTop;
+      }
+    }
+
+    function highlightLogs() {
       const el = document.getElementById('log-content');
       if (!el) return;
-      el.setAttribute('hx-vals', JSON.stringify({serverId: _logServerId, filter: value}));
-      htmx.trigger(el, 'updateFilter');
+      delete el.dataset.highlighted;
+      hljs.highlightElement(el);
     }
-    document.getElementById('log-filter-input')?.addEventListener('sl-input', function (e) {
+
+    function connectLogWs() {
+      if (_logWs) {
+        _logWs.onmessage = null;
+        _logWs.close();
+      }
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${proto}//${location.host}/ws/logs?serverId=${encodeURIComponent(_logServerId)}&filter=${encodeURIComponent(_logFilter)}`;
+      _logWs = new WebSocket(url);
+      _logWs.onmessage = function(e) {
+        const msg = JSON.parse(e.data);
+        const el = document.getElementById('log-content');
+        if (!el) return;
+        saveLogScroll();
+        if (msg.type === 'init') {
+          el.textContent = msg.content;
+        } else if (msg.type === 'append') {
+          el.textContent = el.textContent + msg.content;
+        }
+        highlightLogs();
+        restoreLogScroll();
+      };
+    }
+
+    function disconnectLogWs() {
+      if (_logWs) {
+        _logWs.onmessage = null;
+        _logWs.close();
+        _logWs = null;
+      }
+    }
+
+    function updateLogFilter(value) {
+      _logFilter = value;
+      if (_viewingLatest) {
+        if (_logWs && _logWs.readyState === WebSocket.OPEN) {
+          _logWs.send(JSON.stringify({filter: value}));
+        }
+      } else {
+        const el = document.getElementById('log-content');
+        if (!el) return;
+        el.setAttribute('hx-vals', JSON.stringify({serverId: _logServerId, filter: value}));
+        htmx.trigger(el, 'updateFilter');
+      }
+    }
+
+    document.getElementById('log-filter-input')?.addEventListener('sl-input', function(e) {
       updateLogFilter(e.target.value);
     });
-    document.getElementById('log-filter-input')?.addEventListener('sl-clear', function () {
+    document.getElementById('log-filter-input')?.addEventListener('sl-clear', function() {
       updateLogFilter('');
     });
+
+    // Cancel HTMX request for latest.log — WebSocket handles the content.
+    // For other log files, disconnect WebSocket and let HTMX load.
+    document.body.addEventListener('htmx:configRequest', function(e) {
+      if (!e.detail.elt || !e.detail.elt.closest('.log-files-list')) return;
+      if (e.detail.elt.hasAttribute('data-ws-latest')) {
+        e.preventDefault();
+        _viewingLatest = true;
+        connectLogWs();
+        document.querySelectorAll('.log-files-list a').forEach(a => a.classList.remove('active'));
+        e.detail.elt.classList.add('active');
+      } else {
+        _viewingLatest = false;
+        disconnectLogWs();
+      }
+    });
+
+    // Preserve scroll when HTMX swaps in a static log file.
+    document.body.addEventListener('htmx:beforeSwap', function(e) {
+      if (e.detail.target?.id === 'content') {
+        disconnectLogWs();
+      }
+      if (e.detail.target?.id === 'log-content') {
+        saveLogScroll();
+      }
+    });
+
+    htmx.on('htmx:afterSettle', function() {
+      highlightLogs();
+      restoreLogScroll();
+    });
+
+    if (_viewingLatest) {
+      connectLogWs();
+    } else {
+      highlightLogs();
+    }
   </script>
 </div>
 
 <pre th:fragment="log-content"
      id="log-content"
+     class="language-log"
      th:hx-get="'/logs/content?serverId=' + ${serverId}"
      th:hx-vals='|{"filter": "${filter}"}|'
-     hx-trigger="every 3s, updateFilter"
+     hx-trigger="updateFilter"
      hx-swap="outerHTML"
      th:text="${logContent}"></pre>
 </body>
