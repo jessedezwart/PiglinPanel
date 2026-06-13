@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Piglinpanel</title>
+  <title>Piglin Panel</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/themes/light.css" crossorigin="anonymous" />
   <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.0/cdn/shoelace-autoloader.js" integrity="sha384-of8LXlkyMCAT14b4mQEBHRclQhowQAA+z328bANMFZBR6em9yjBEmyaeq59nXe/x" crossorigin="anonymous"></script>
   <link rel="stylesheet" th:href="@{/css/main.css}">
@@ -12,7 +12,7 @@
 <body>
 
 <header class="topbar">
-  <span class="app-name">Piglinpanel</span>
+  <span class="app-name">Piglin Panel</span>
 
   <div class="server-selector">
     <sl-select id="server-select" size="small" th:if="${not #lists.isEmpty(servers)}" th:value="${serverId}">

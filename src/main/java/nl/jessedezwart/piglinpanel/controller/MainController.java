@@ -126,7 +126,7 @@ public class MainController extends BaseController {
     StringBuilder sb = new StringBuilder();
     for (ModFolder f : folders) {
       if (!sb.isEmpty()) sb.append('\n');
-      sb.append(f.getName()).append('=').append(f.getPath());
+      sb.append(f.getPath());
     }
     return sb.toString();
   }
@@ -137,15 +137,8 @@ public class MainController extends BaseController {
     for (String line : text.split("\\r?\\n")) {
       line = line.trim();
       if (line.isEmpty()) continue;
-      int eq = line.indexOf('=');
-      if (eq > 0) {
-        String folderName = line.substring(0, eq).trim();
-        String folderPath = line.substring(eq + 1).trim();
-        String folderId = folderName.toLowerCase().replaceAll("[^a-z0-9]+", "-");
-        folders.add(new ModFolder(folderId, folderName, folderPath));
-      } else {
-        folders.add(new ModFolder(line.toLowerCase().replaceAll("[^a-z0-9]+", "-"), line, line));
-      }
+      String folderId = line.toLowerCase().replaceAll("[^a-z0-9]+", "-");
+      folders.add(new ModFolder(folderId, line, line));
     }
     return folders;
   }
