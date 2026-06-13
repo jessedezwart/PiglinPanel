@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -21,91 +20,47 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientRequestException;
-import reactor.core.publisher.Mono;
-import reactor.util.retry.Retry;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
 @Component
 public class ModrinthClient {
   private static final String API_BASE_URL = "https://api.modrinth.com/v2";
   private static final Logger log = LoggerFactory.getLogger(ModrinthClient.class);
-  private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(20);
-  private static final Duration INITIAL_BACKOFF = Duration.ofMillis(500);
-  private static final Duration MAX_RETRY_DELAY = Duration.ofSeconds(30);
-  private static final int MAX_429_RETRIES = 6;
-  private static final int MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
   private final ObjectMapper objectMapper;
-  private final WebClient webClient;
+  private final RestClient restClient;
   private final String apiBaseUrl;
-  private final int max429Retries;
-  private final Duration initialBackoff;
-  private final Duration maxRetryDelay;
 
   @Autowired
   public ModrinthClient(ObjectMapper objectMapper) {
-    this(
-        objectMapper,
-        webClient(),
-        API_BASE_URL,
-        MAX_429_RETRIES,
-        INITIAL_BACKOFF,
-        MAX_RETRY_DELAY);
+    this(objectMapper, restClient(), API_BASE_URL);
   }
 
-  private ModrinthClient(
-      ObjectMapper objectMapper,
-      WebClient webClient,
-      String apiBaseUrl,
-      int max429Retries,
-      Duration initialBackoff,
-      Duration maxRetryDelay) {
+  private ModrinthClient(ObjectMapper objectMapper, RestClient restClient, String apiBaseUrl) {
     this.objectMapper = objectMapper;
-    this.webClient = webClient;
+    this.restClient = restClient;
     this.apiBaseUrl = apiBaseUrl;
-    this.max429Retries = max429Retries;
-    this.initialBackoff = initialBackoff;
-    this.maxRetryDelay = maxRetryDelay;
   }
 
   static ModrinthClient createForTesting(
-      ObjectMapper objectMapper, WebClient webClient, String apiBaseUrl) {
-    return new ModrinthClient(
-        objectMapper,
-        webClient,
-        apiBaseUrl,
-        MAX_429_RETRIES,
-        INITIAL_BACKOFF,
-        MAX_RETRY_DELAY);
+      ObjectMapper objectMapper, RestClient restClient, String apiBaseUrl) {
+    return new ModrinthClient(objectMapper, restClient, apiBaseUrl);
   }
 
-  static ModrinthClient createForTesting(
-      ObjectMapper objectMapper,
-      WebClient webClient,
-      String apiBaseUrl,
-      int max429Retries,
-      Duration initialBackoff,
-      Duration maxRetryDelay) {
-    return new ModrinthClient(
-        objectMapper, webClient, apiBaseUrl, max429Retries, initialBackoff, maxRetryDelay);
-  }
-
-  public Optional<ModUpdate> findSuggestedUpdate(String sha1)
-      throws IOException, InterruptedException {
+  public Optional<ModUpdate> findSuggestedUpdate(String sha1) throws IOException {
     return findSuggestedUpdates(List.of(sha1)).getOrDefault(sha1, Optional.empty());
   }
 
   public Map<String, Optional<ModUpdate>> findSuggestedUpdates(List<String> sha1s)
-      throws IOException, InterruptedException {
+      throws IOException {
     if (sha1s == null || sha1s.isEmpty()) {
       return Map.of();
     }
-    List<String> requestedHashes = sha1s.stream()
-        .filter(hash -> hash != null && !hash.isBlank())
-        .distinct()
-        .toList();
+    List<String> requestedHashes =
+        sha1s.stream().filter(hash -> hash != null && !hash.isBlank()).distinct().toList();
     if (requestedHashes.isEmpty()) {
       return Map.of();
     }
@@ -120,7 +75,7 @@ public class ModrinthClient {
           projectId -> {
             try {
               return project(projectId).map(Project::title).orElse(projectId);
-            } catch (IOException | InterruptedException e) {
+            } catch (IOException e) {
               throw new ProjectLookupRuntimeException(projectId, e);
             }
           });
@@ -141,9 +96,6 @@ public class ModrinthClient {
       if (cause instanceof IOException ioException) {
         throw ioException;
       }
-      if (cause instanceof InterruptedException interruptedException) {
-        throw interruptedException;
-      }
       throw new IOException("Modrinth project lookup failed for " + e.projectId(), cause);
     }
 
@@ -154,23 +106,23 @@ public class ModrinthClient {
         updates.put(sha1, Optional.empty());
         continue;
       }
-      String projectName = projectNames.getOrDefault(currentVersion.projectId(), currentVersion.projectId());
+      String projectName =
+          projectNames.getOrDefault(currentVersion.projectId(), currentVersion.projectId());
       Version latestVersion = latestVersions.get(sha1);
       updates.put(sha1, Optional.of(toModUpdate(currentVersion, latestVersion, projectName)));
     }
     return updates;
   }
 
-  public byte[] download(URI uri) throws IOException, InterruptedException {
+  public byte[] download(URI uri) throws IOException {
     Response response = get(uri.toString());
     if (response.statusCode() / 100 != 2) {
-      throw new IOException(
-          "Download failed with HTTP " + response.statusCode() + " for " + uri);
+      throw new IOException("Download failed with HTTP " + response.statusCode() + " for " + uri);
     }
     return response.body();
   }
 
-  public byte[] downloadUpdate(ModUpdate update) throws IOException, InterruptedException {
+  public byte[] downloadUpdate(ModUpdate update) throws IOException {
     if (update.downloadUrl() != null) {
       try {
         return download(update.downloadUrl());
@@ -198,11 +150,15 @@ public class ModrinthClient {
         update.projectId(),
         update.latestVersionId());
     Version version = version(update.projectId(), update.latestVersionId());
-    File file = version.fileByName(update.fileName()).or(() -> version.primaryFile())
-        .orElseThrow(
-            () ->
-                new IOException(
-                    "No downloadable file found for Modrinth version " + update.latestVersionId()));
+    File file =
+        version
+            .fileByName(update.fileName())
+            .or(() -> version.primaryFile())
+            .orElseThrow(
+                () ->
+                    new IOException(
+                        "No downloadable file found for Modrinth version "
+                            + update.latestVersionId()));
     if (file.url() == null || file.url().isBlank()) {
       throw new IOException(
           "Modrinth version " + update.latestVersionId() + " did not provide a download URL");
@@ -216,7 +172,7 @@ public class ModrinthClient {
     return download(URI.create(file.url()));
   }
 
-  private Optional<Project> project(String projectId) throws IOException, InterruptedException {
+  private Optional<Project> project(String projectId) throws IOException {
     String uri = apiBaseUrl + "/project/" + encode(projectId);
     Response response = get(uri);
     if (response.statusCode() == 404) {
@@ -226,15 +182,14 @@ public class ModrinthClient {
     return Optional.of(objectMapper.readValue(response.bodyAsString(), Project.class));
   }
 
-  private Version version(String projectId, String versionId) throws IOException, InterruptedException {
+  private Version version(String projectId, String versionId) throws IOException {
     String uri = apiBaseUrl + "/project/" + encode(projectId) + "/version/" + encode(versionId);
     Response response = get(uri);
     requireSuccess(response, uri);
     return objectMapper.readValue(response.bodyAsString(), Version.class);
   }
 
-  private Map<String, Version> versionsByHashes(List<String> sha1s)
-      throws IOException, InterruptedException {
+  private Map<String, Version> versionsByHashes(List<String> sha1s) throws IOException {
     String uri = apiBaseUrl + "/version_files";
     Response response = postJson(uri, Map.of("hashes", sha1s, "algorithm", "sha1"));
     logBulkResponse(uri, response);
@@ -243,16 +198,16 @@ public class ModrinthClient {
   }
 
   private Map<String, Version> latestVersionsForHashes(
-      List<String> sha1s, List<String> loaders, List<String> gameVersions)
-      throws IOException, InterruptedException {
+      List<String> sha1s, List<String> loaders, List<String> gameVersions) throws IOException {
     String uri = apiBaseUrl + "/version_files/update";
-    Response response = postJson(
-        uri,
-        Map.of(
-            "hashes", sha1s,
-            "algorithm", "sha1",
-            "loaders", loaders,
-            "game_versions", gameVersions));
+    Response response =
+        postJson(
+            uri,
+            Map.of(
+                "hashes", sha1s,
+                "algorithm", "sha1",
+                "loaders", loaders,
+                "game_versions", gameVersions));
     logBulkResponse(uri, response);
     requireSuccess(response, uri);
     return readVersionMap(response.bodyAsString());
@@ -303,63 +258,44 @@ public class ModrinthClient {
   }
 
   private Map<String, Version> readVersionMap(String body) throws IOException {
-    Map<String, Version> versionMap = objectMapper.readValue(
-        body,
-        objectMapper.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, Version.class));
+    Map<String, Version> versionMap =
+        objectMapper.readValue(
+            body,
+            objectMapper
+                .getTypeFactory()
+                .constructMapType(LinkedHashMap.class, String.class, Version.class));
     return versionMap.entrySet().stream()
         .filter(entry -> entry.getKey() != null && entry.getValue() != null)
-        .collect(Collectors.toMap(
-            Map.Entry::getKey,
-            Map.Entry::getValue,
-            (left, right) -> left,
-            LinkedHashMap::new));
+        .collect(
+            Collectors.toMap(
+                Map.Entry::getKey,
+                Map.Entry::getValue,
+                (left, right) -> left,
+                LinkedHashMap::new));
   }
 
-  private Response get(String uri) throws IOException, InterruptedException {
-    return exchange(webClient.get().uri(uri), uri);
-  }
-
-  private Response postJson(String uri, Object body) throws IOException, InterruptedException {
-    return exchange(webClient.post().uri(uri).bodyValue(body), uri);
-  }
-
-  private Response exchange(WebClient.RequestHeadersSpec<?> request, String uri)
-      throws IOException, InterruptedException {
+  private Response get(String uri) throws IOException {
     try {
-      return request
-          .exchangeToMono(
-              response -> {
-                if (response.statusCode().value() == 429) {
-                  return response.releaseBody().then(Mono.error(new RateLimitException(uri)));
-                }
-                return response.bodyToMono(byte[].class)
-                    .defaultIfEmpty(new byte[0])
-                    .map(body -> new Response(response.statusCode().value(), body));
-              })
-          .timeout(REQUEST_TIMEOUT)
-          .retryWhen(
-              Retry.backoff(max429Retries, initialBackoff)
-                  .maxBackoff(maxRetryDelay)
-                  .jitter(0d)
-                  .filter(RateLimitException.class::isInstance)
-                  .doBeforeRetry(
-                      signal -> log.warn(
-                          "Modrinth rate limit hit for {}. Retrying {}/{}",
-                          uri,
-                          signal.totalRetries() + 1,
-                          max429Retries + 1)))
-          .block();
-    } catch (RateLimitException e) {
-      throw new IOException("Modrinth request failed with HTTP 429 after retries for " + uri, e);
-    } catch (WebClientRequestException e) {
+      return restClient
+          .get()
+          .uri(URI.create(uri))
+          .exchange(
+              (req, resp) -> new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
+    } catch (RestClientException e) {
       throw new IOException("Modrinth request failed for " + uri, e);
-    } catch (RuntimeException e) {
-      if (hasCause(e, RateLimitException.class)) {
-        throw new IOException("Modrinth request failed with HTTP 429 after retries for " + uri, e);
-      }
-      if (hasCause(e, java.util.concurrent.TimeoutException.class)) {
-        throw new IOException("Modrinth request timed out for " + uri, e);
-      }
+    }
+  }
+
+  private Response postJson(String uri, Object body) throws IOException {
+    try {
+      return restClient
+          .post()
+          .uri(URI.create(uri))
+          .contentType(MediaType.APPLICATION_JSON)
+          .body(body)
+          .exchange(
+              (req, resp) -> new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
+    } catch (RestClientException e) {
       throw new IOException("Modrinth request failed for " + uri, e);
     }
   }
@@ -371,26 +307,12 @@ public class ModrinthClient {
     }
   }
 
-  private static WebClient webClient() {
-    return WebClient.builder()
-        .defaultHeader(HttpHeaders.USER_AGENT, "Piglinpanel/0.1")
-        .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(MAX_RESPONSE_BYTES))
-        .build();
+  private static RestClient restClient() {
+    return RestClient.builder().defaultHeader(HttpHeaders.USER_AGENT, "Piglinpanel/0.1").build();
   }
 
   private static String encode(String value) {
     return URLEncoder.encode(value, StandardCharsets.UTF_8);
-  }
-
-  private static boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
-    Throwable current = throwable;
-    while (current != null) {
-      if (type.isInstance(current)) {
-        return true;
-      }
-      current = current.getCause();
-    }
-    return false;
   }
 
   private static boolean isHttpStatus(IOException exception, int statusCode) {
@@ -419,12 +341,6 @@ public class ModrinthClient {
     }
   }
 
-  private static final class RateLimitException extends RuntimeException {
-    private RateLimitException(String uri) {
-      super("Modrinth rate limited request to " + uri);
-    }
-  }
-
   private static final class ProjectLookupRuntimeException extends RuntimeException {
     private final String projectId;
 
@@ -441,14 +357,12 @@ public class ModrinthClient {
   private record UpdateCriteria(List<String> loaders, List<String> gameVersions) {
     private static UpdateCriteria from(Version version) {
       return new UpdateCriteria(
-          List.copyOf(requestedLoaders(version)),
-          List.copyOf(requestedGameVersions(version)));
+          List.copyOf(requestedLoaders(version)), List.copyOf(requestedGameVersions(version)));
     }
   }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
-  public record Project(String id, String title) {
-  }
+  public record Project(String id, String title) {}
 
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Version(
@@ -484,13 +398,10 @@ public class ModrinthClient {
       if (fileName == null || fileName.isBlank() || files == null || files.isEmpty()) {
         return Optional.empty();
       }
-      return files.stream()
-          .filter(file -> fileName.equals(file.filename()))
-          .findFirst();
+      return files.stream().filter(file -> fileName.equals(file.filename())).findFirst();
     }
   }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
-  public record File(String filename, String url, boolean primary) {
-  }
+  public record File(String filename, String url, boolean primary) {}
 }

@@ -1,141 +1,22 @@
 package nl.jessedezwart.piglinpanel.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
-import java.time.Duration;
 import java.time.Instant;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.client.RestClient;
 
 class ModrinthClientTests {
-  @Test
-  void retriesRateLimitedLookupsUsingExponentialBackoff() throws Exception {
-    AtomicInteger versionFilesCalls = new AtomicInteger();
-    HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-    server.createContext(
-        "/v2/version_files",
-        exchange -> {
-          if (versionFilesCalls.getAndIncrement() == 0) {
-            respond(exchange, 429, "{\"error\":\"rate_limited\"}");
-            return;
-          }
-          assertThat(exchange.getRequestMethod()).isEqualTo("POST");
-          String requestBody = readRequestBody(exchange);
-          assertThat(requestBody).contains("\"hashes\":[\"test-sha1\"]");
-          assertThat(requestBody).contains("\"algorithm\":\"sha1\"");
-          respond(
-              exchange,
-              200,
-              """
-              {
-                "test-sha1": {
-                  "id":"current",
-                  "project_id":"project",
-                  "name":"Current",
-                  "loaders":["fabric"],
-                  "game_versions":["1.21.1"],
-                  "files":[{"filename":"current.jar","url":"https://example.com/current.jar","primary":true}],
-                  "date_published":"2026-06-01T10:00:00Z"
-                }
-              }
-              """);
-        });
-    server.createContext(
-        "/v2/project/project",
-        exchange -> respond(exchange, 200, "{\"id\":\"project\",\"title\":\"Project\"}"));
-    server.createContext(
-        "/v2/version_files/update",
-        exchange -> {
-          assertThat(exchange.getRequestMethod()).isEqualTo("POST");
-          String requestBody = readRequestBody(exchange);
-          assertThat(requestBody).contains("\"hashes\":[\"test-sha1\"]");
-          assertThat(requestBody).contains("\"algorithm\":\"sha1\"");
-          assertThat(requestBody).contains("\"loaders\":[\"fabric\"]");
-          assertThat(requestBody).contains("\"game_versions\":[\"1.21.1\"]");
-          respond(
-              exchange,
-              200,
-              """
-              {
-                "test-sha1": {
-                  "id":"latest",
-                  "project_id":"project",
-                  "name":"Latest",
-                  "loaders":["fabric"],
-                  "game_versions":["1.21.1"],
-                  "files":[{"filename":"latest.jar","url":"https://example.com/latest.jar","primary":true}],
-                  "date_published":"2026-06-10T12:00:00Z"
-                }
-              }
-              """);
-        });
-    server.start();
-    try {
-      ModrinthClient client =
-          ModrinthClient.createForTesting(
-              new ObjectMapper(),
-              webClient(),
-              "http://localhost:" + server.getAddress().getPort() + "/v2",
-              1,
-              Duration.ofMillis(1),
-              Duration.ofMillis(1));
-
-      Optional<ModUpdate> update = client.findSuggestedUpdate("test-sha1");
-
-      assertThat(update).isPresent();
-      assertThat(update.get().latestVersionName()).isEqualTo("Latest");
-      assertThat(update.get().projectName()).isEqualTo("Project");
-      assertThat(update.get().lastUpdatedAt())
-          .isEqualTo(Instant.parse("2026-06-10T12:00:00Z"));
-      assertThat(versionFilesCalls.get()).isEqualTo(2);
-    } finally {
-      server.stop(0);
-    }
-  }
-
-  @Test
-  void failsWhenRateLimitRetriesAreExhausted() throws Exception {
-    AtomicInteger versionFilesCalls = new AtomicInteger();
-    HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
-    server.createContext(
-        "/v2/version_files",
-        exchange -> {
-          versionFilesCalls.incrementAndGet();
-          respond(exchange, 429, "{\"error\":\"rate_limited\"}");
-        });
-    server.start();
-    try {
-      ModrinthClient client =
-          ModrinthClient.createForTesting(
-              new ObjectMapper(),
-              webClient(),
-              "http://localhost:" + server.getAddress().getPort() + "/v2",
-              4,
-              Duration.ofMillis(1),
-              Duration.ofMillis(1));
-
-      assertThatThrownBy(() -> client.findSuggestedUpdate("test-sha1"))
-          .isInstanceOf(IOException.class)
-          .hasMessageContaining("HTTP 429 after retries");
-      assertThat(versionFilesCalls.get()).isEqualTo(5);
-    } finally {
-      server.stop(0);
-    }
-  }
-
   @Test
   void refreshesVersionMetadataWhenStoredDownloadUrlReturns404() throws Exception {
     HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
@@ -171,11 +52,8 @@ class ModrinthClientTests {
       ModrinthClient client =
           ModrinthClient.createForTesting(
               new ObjectMapper(),
-              webClient(),
-              "http://localhost:" + server.getAddress().getPort() + "/v2",
-              0,
-              Duration.ofMillis(1),
-              Duration.ofMillis(1));
+              restClient(),
+              "http://localhost:" + server.getAddress().getPort() + "/v2");
 
       byte[] bytes =
           client.downloadUpdate(
@@ -196,10 +74,8 @@ class ModrinthClientTests {
     }
   }
 
-  private static WebClient webClient() {
-    return WebClient.builder()
-        .defaultHeader(HttpHeaders.USER_AGENT, "Piglinpanel/0.1")
-        .build();
+  private static RestClient restClient() {
+    return RestClient.builder().defaultHeader(HttpHeaders.USER_AGENT, "Piglinpanel/0.1").build();
   }
 
   private static void respond(HttpExchange exchange, int status, String body, String... headers)
@@ -214,9 +90,4 @@ class ModrinthClientTests {
     }
   }
 
-  private static String readRequestBody(HttpExchange exchange) throws IOException {
-    try (InputStream body = exchange.getRequestBody()) {
-      return new String(body.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-    }
-  }
 }

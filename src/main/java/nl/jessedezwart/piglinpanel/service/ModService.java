@@ -135,31 +135,17 @@ public class ModService {
         profile.getName(),
         update.latestVersionName());
     ServerFileSystem fileSystem = connectionService.fileSystem(profile);
-    try {
-      String archivedName = nextArchiveName(modFile.relativePath());
-      final byte[] bytes = modrinthClient.downloadUpdate(update);
-      fileSystem.move(modFile.relativePath(), archivedName);
-      modHashCacheStore.move(profile, modFile.relativePath(), archivedName);
-      if (modFile.sha1() != null && !modFile.sha1().isBlank()) {
-        cacheWrittenFile(
-            profile,
-            fileSystem,
-            archivedName,
-            modFile.sha1(),
-            update.projectName());
-      }
-      String updatedPath = joinPath(modFile.folderPath(), update.fileName());
-      fileSystem.writeBytes(updatedPath, bytes);
-      cacheWrittenFile(
-          profile,
-          fileSystem,
-          updatedPath,
-          digest("SHA-1", bytes),
-          update.projectName());
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new IOException("Interrupted while downloading mod update", e);
+    String archivedName = nextArchiveName(modFile.relativePath());
+    final byte[] bytes = modrinthClient.downloadUpdate(update);
+    fileSystem.move(modFile.relativePath(), archivedName);
+    modHashCacheStore.move(profile, modFile.relativePath(), archivedName);
+    if (modFile.sha1() != null && !modFile.sha1().isBlank()) {
+      cacheWrittenFile(profile, fileSystem, archivedName, modFile.sha1(), update.projectName());
     }
+    String updatedPath = joinPath(modFile.folderPath(), update.fileName());
+    fileSystem.writeBytes(updatedPath, bytes);
+    cacheWrittenFile(
+        profile, fileSystem, updatedPath, digest("SHA-1", bytes), update.projectName());
   }
 
   static String nextArchiveName(String relativePath) {
@@ -179,9 +165,6 @@ public class ModService {
     } catch (IOException e) {
       log.warn("Modrinth bulk lookup failed for {}", profile.getName(), e);
       return;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new IOException("Interrupted while checking Modrinth", e);
     }
 
     Map<String, LookupCandidate> candidatesByPath = new LinkedHashMap<>();
@@ -198,7 +181,8 @@ public class ModService {
           .getOrDefault(lookupCandidate.sha1(), Optional.empty())
           .orElse(mod.update());
       if (update != null && update.projectName() != null && !update.projectName().isBlank()) {
-        modHashCacheStore.put(profile, lookupCandidate.entry(), lookupCandidate.sha1(), update.projectName());
+        modHashCacheStore.put(
+            profile, lookupCandidate.entry(), lookupCandidate.sha1(), update.projectName());
       }
       mods.set(
           index,
