@@ -1,4 +1,3 @@
 Ideas:
 - WinScp shortcut
-- Logging in the GUI
-- Move to htmx
+- Logging in the GUI (websocket)

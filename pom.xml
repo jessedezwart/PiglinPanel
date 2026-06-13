@@ -18,26 +18,20 @@
 
   <properties>
     <java.version>25</java.version>
-    <javafx.version>25.0.3</javafx.version>
-    <javafx.platform>win</javafx.platform>
-    <main.class>nl.jessedezwart.piglinpanel.app.DesktopLauncher</main.class>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <spotless.version>2.44.5</spotless.version>
     <google-java-format.version>1.35.0</google-java-format.version>
     <checkstyle.version>12.1.2</checkstyle.version>
-    <native.maven.plugin.version>0.11.5</native.maven.plugin.version>
-    <javafx.maven.plugin.version>0.0.8</javafx.maven.plugin.version>
-    <native.access.args>--enable-native-access=javafx.graphics --enable-native-access=ALL-UNNAMED</native.access.args>
   </properties>
 
   <dependencies>
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter</artifactId>
+      <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-webflux</artifactId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
     </dependency>
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
@@ -47,24 +41,6 @@
       <groupId>com.github.mwiede</groupId>
       <artifactId>jsch</artifactId>
       <version>0.2.25</version>
-    </dependency>
-    <dependency>
-      <groupId>org.openjfx</groupId>
-      <artifactId>javafx-base</artifactId>
-      <version>${javafx.version}</version>
-      <classifier>${javafx.platform}</classifier>
-    </dependency>
-    <dependency>
-      <groupId>org.openjfx</groupId>
-      <artifactId>javafx-graphics</artifactId>
-      <version>${javafx.version}</version>
-      <classifier>${javafx.platform}</classifier>
-    </dependency>
-    <dependency>
-      <groupId>org.openjfx</groupId>
-      <artifactId>javafx-controls</artifactId>
-      <version>${javafx.version}</version>
-      <classifier>${javafx.platform}</classifier>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -103,22 +79,7 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
-          <mainClass>${main.class}</mainClass>
           <excludeDevtools>true</excludeDevtools>
-          <jvmArguments>${native.access.args}</jvmArguments>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.openjfx</groupId>
-        <artifactId>javafx-maven-plugin</artifactId>
-        <version>0.0.8</version>
-        <configuration>
-          <mainClass>nl.jessedezwart.piglinpanel.app.DesktopLauncher</mainClass>
-          <options>
-            <option>--enable-native-access=javafx.graphics</option>
-            <option>--enable-native-access=ALL-UNNAMED</option>
-            <option>-XX:+EnableDynamicAgentLoading</option>
-          </options>
         </configuration>
       </plugin>
       <plugin>
@@ -152,11 +113,6 @@
             </googleJavaFormat>
           </java>
         </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.graalvm.buildtools</groupId>
-        <artifactId>native-maven-plugin</artifactId>
-        <version>${native.maven.plugin.version}</version>
       </plugin>
     </plugins>
   </build>

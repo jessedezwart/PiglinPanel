@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+  <div th:if="${profile == null}" class="empty-state">No server selected.</div>
+
+  <div th:if="${profile != null}" class="split" style="height: calc(100vh - 120px);">
+    <div class="split-left">
+      <ul class="log-files-list">
+        <li>
+          <a hx-get="/logs/content"
+             th:hx-vals='|{"serverId": "${serverId}", "filter": ""}|'
+             hx-target="#log-content"
+             hx-swap="outerHTML"
+             th:classappend="${currentLogPath == 'latest.log'} ? ' active'">
+            latest.log
+          </a>
+        </li>
+        <li th:each="f : ${logFiles}" th:if="${f.name != 'latest.log'}">
+          <a th:hx-get="'/logs/file?serverId=' + ${serverId} + '&amp;path=' + ${f.name}"
+             hx-target="#log-content"
+             hx-swap="outerHTML"
+             th:text="${f.name}">
+          </a>
+        </li>
+      </ul>
+    </div>
+    <div class="split-right">
+      <div class="log-filter">
+        <input type="text" placeholder="Filter..." th:value="${filter}"
+               id="log-filter-input"
+               oninput="updateLogFilter(this.value)">
+      </div>
+      <div th:replace="~{fragments/logs :: log-content}"></div>
+    </div>
+  </div>
+
+  <script th:inline="javascript">
+    const _logServerId = /*[[${serverId}]]*/ '';
+    function updateLogFilter(value) {
+      const el = document.getElementById('log-content');
+      if (!el) return;
+      el.setAttribute('hx-vals', JSON.stringify({serverId: _logServerId, filter: value}));
+      htmx.trigger(el, 'updateFilter');
+    }
+  </script>
+</div>
+
+<pre th:fragment="log-content"
+     id="log-content"
+     th:hx-get="'/logs/content?serverId=' + ${serverId}"
+     th:hx-vals='|{"filter": "${filter}"}|'
+     hx-trigger="every 3s, updateFilter"
+     hx-swap="outerHTML"
+     th:text="${logContent}"></pre>
+</body>
+</html>

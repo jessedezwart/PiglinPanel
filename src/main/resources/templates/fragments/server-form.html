@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="form" class="modal-box" onclick="event.stopPropagation()">
+  <div style="display:flex; align-items:center; margin-bottom:16px;">
+    <span class="modal-title" th:text="${isNew} ? 'Add Server' : 'Edit Server'"></span>
+    <button type="button" class="modal-close" onclick="document.getElementById('modal').innerHTML=''">&#10005;</button>
+  </div>
+
+  <form hx-post="/servers"
+        hx-target="body"
+        hx-swap="outerHTML">
+
+    <input type="hidden" name="id" th:value="${editProfile.id}">
+
+    <div class="form-group">
+      <label>Server Name</label>
+      <input type="text" name="name" th:value="${editProfile.name}" required>
+    </div>
+
+    <div class="form-group">
+      <label>Access Type</label>
+      <select name="accessType">
+        <option value="LOCAL" th:selected="${editProfile.accessType.name() == 'LOCAL'}">Local</option>
+        <option value="SSH" th:selected="${editProfile.accessType.name() == 'SSH'}">SSH</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Root Path</label>
+      <input type="text" name="rootPath" th:value="${editProfile.rootPath}" placeholder="/path/to/server">
+    </div>
+
+    <div class="form-group">
+      <label>Logs Path (relative to root)</label>
+      <input type="text" name="logsPath" th:value="${editProfile.logsPath}" placeholder="logs">
+    </div>
+
+    <div class="form-group">
+      <label>Mod Folders (one per line: Name=path)</label>
+      <textarea name="modFoldersText" rows="4" th:text="${modFoldersText}" placeholder="Server mods=mods"></textarea>
+    </div>
+
+    <p class="form-section-title">SSH</p>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Host</label>
+        <input type="text" name="sshHost" th:value="${editProfile.ssh.host}">
+      </div>
+      <div class="form-group" style="max-width:100px;">
+        <label>Port</label>
+        <input type="number" name="sshPort" th:value="${editProfile.ssh.port}">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" name="sshUsername" th:value="${editProfile.ssh.username}">
+    </div>
+
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" name="sshPassword" th:value="${editProfile.ssh.password}" autocomplete="new-password">
+    </div>
+
+    <div class="form-group">
+      <label>Private Key Path</label>
+      <input type="text" name="sshPrivateKeyPath" th:value="${editProfile.ssh.privateKeyPath}" placeholder="/home/user/.ssh/id_rsa">
+    </div>
+
+    <div class="form-group">
+      <label>Private Key Passphrase</label>
+      <input type="password" name="sshPrivateKeyPassphrase" th:value="${editProfile.ssh.privateKeyPassphrase}" autocomplete="new-password">
+    </div>
+
+    <p class="form-section-title">RCON</p>
+
+    <div class="form-group">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" name="rconEnabled" value="true" th:checked="${editProfile.rcon.enabled}">
+        Enable RCON
+      </label>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>RCON Host</label>
+        <input type="text" name="rconHost" th:value="${editProfile.rcon.host}">
+      </div>
+      <div class="form-group" style="max-width:100px;">
+        <label>Port</label>
+        <input type="number" name="rconPort" th:value="${editProfile.rcon.port}">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>RCON Password</label>
+      <input type="password" name="rconPassword" th:value="${editProfile.rcon.password}" autocomplete="new-password">
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn btn-secondary" onclick="document.getElementById('modal').innerHTML=''">Cancel</button>
+      <button type="submit" class="btn btn-primary" th:text="${isNew} ? 'Add Server' : 'Save Changes'"></button>
+    </div>
+  </form>
+</div>
+</body>
+</html>

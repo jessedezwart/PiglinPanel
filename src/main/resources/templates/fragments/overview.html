@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+  <div th:if="${profile == null}" class="empty-state">
+    No server selected. Add a server using the "+ Add server" button.
+  </div>
+
+  <div th:if="${profile != null}">
+    <div class="overview-section">
+      <h2>General</h2>
+      <div class="overview-grid">
+        <span class="overview-key">Name</span>
+        <span th:text="${profile.name}"></span>
+        <span class="overview-key">Access Type</span>
+        <span th:text="${profile.accessType}"></span>
+        <span class="overview-key">Root Path</span>
+        <span th:text="${profile.rootPath}"></span>
+        <span class="overview-key">Logs Path</span>
+        <span th:text="${profile.logsPath}"></span>
+      </div>
+    </div>
+
+    <div class="overview-section">
+      <h2>Mod Folders</h2>
+      <div th:if="${#lists.isEmpty(profile.modFolders)}" class="empty-state" style="padding:8px 0">
+        No mod folders configured.
+      </div>
+      <div class="overview-grid" th:if="${not #lists.isEmpty(profile.modFolders)}">
+        <th:block th:each="folder : ${profile.modFolders}">
+          <span class="overview-key" th:text="${folder.name}"></span>
+          <span th:text="${folder.path}"></span>
+        </th:block>
+      </div>
+    </div>
+
+    <div class="overview-section" th:if="${profile.accessType.name() == 'SSH'}">
+      <h2>SSH</h2>
+      <div class="overview-grid">
+        <span class="overview-key">Host</span>
+        <span th:text="${profile.ssh.host + ':' + profile.ssh.port}"></span>
+        <span class="overview-key">Username</span>
+        <span th:text="${profile.ssh.username}"></span>
+        <span class="overview-key">Private Key</span>
+        <span th:text="${profile.ssh.privateKeyPath.isBlank() ? '(password auth)' : profile.ssh.privateKeyPath}"></span>
+      </div>
+    </div>
+
+    <div class="overview-section">
+      <h2>RCON</h2>
+      <div class="overview-grid">
+        <span class="overview-key">Enabled</span>
+        <span th:text="${profile.rcon.enabled ? 'Yes' : 'No'}"></span>
+        <span class="overview-key" th:if="${profile.rcon.enabled}">Address</span>
+        <span th:if="${profile.rcon.enabled}" th:text="${profile.rcon.host + ':' + profile.rcon.port}"></span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

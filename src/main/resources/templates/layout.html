@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Piglinpanel</title>
+  <link rel="stylesheet" th:href="@{/css/main.css}">
+  <script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <span class="app-name">Piglinpanel</span>
+
+  <div class="server-selector">
+    <select id="server-select" onchange="selectServer(this.value)" th:if="${not #lists.isEmpty(servers)}">
+      <option th:each="s : ${servers}"
+              th:value="${s.id}"
+              th:text="${s.name}"
+              th:selected="${s.id == serverId}"></option>
+    </select>
+    <span th:if="${#lists.isEmpty(servers)}" class="no-servers">No servers</span>
+  </div>
+
+  <div class="server-actions">
+    <button class="btn btn-sm"
+            hx-get="/servers/new-form"
+            hx-target="#modal"
+            hx-swap="innerHTML">+ Add server</button>
+    <button class="btn btn-sm btn-secondary"
+            th:if="${profile != null}"
+            hx-get="/servers/edit-form"
+            hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'
+            hx-target="#modal"
+            hx-swap="innerHTML">Edit</button>
+    <button class="btn btn-sm btn-danger"
+            th:if="${profile != null}"
+            hx-post="/servers/__${profile.id}__/delete"
+            hx-confirm="Delete this server?"
+            hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'>Delete</button>
+  </div>
+</header>
+
+<div class="app-body">
+  <nav class="sidebar">
+    <a class="nav-link" th:classappend="${currentView == 'overview'} ? ' active'"
+       hx-get="/overview" hx-target="#content" hx-push-url="true"
+       hx-vals='js:{"serverId": currentServerId()}'>Overview</a>
+    <a class="nav-link" th:classappend="${currentView == 'mods'} ? ' active'"
+       hx-get="/mods" hx-target="#content" hx-push-url="true"
+       hx-vals='js:{"serverId": currentServerId()}'>Mods</a>
+    <a class="nav-link" th:classappend="${currentView == 'logs'} ? ' active'"
+       hx-get="/logs" hx-target="#content" hx-push-url="true"
+       hx-vals='js:{"serverId": currentServerId()}'>Logs</a>
+    <a class="nav-link" th:classappend="${currentView == 'files'} ? ' active'"
+       hx-get="/files" hx-target="#content" hx-push-url="true"
+       hx-vals='js:{"serverId": currentServerId()}'>Files</a>
+    <a class="nav-link" th:if="${profile != null and profile.rcon.enabled}"
+       th:classappend="${currentView == 'rcon'} ? ' active'"
+       hx-get="/rcon" hx-target="#content" hx-push-url="true"
+       hx-vals='js:{"serverId": currentServerId()}'>RCON</a>
+  </nav>
+
+  <main id="content">
+    <div th:replace="~{__${contentFragment}__}"></div>
+  </main>
+</div>
+
+<div id="modal"></div>
+
+<script th:inline="javascript">
+  const _serverId = /*[[${serverId}]]*/ '';
+
+  function currentServerId() {
+    const sel = document.getElementById('server-select');
+    return sel ? sel.value : _serverId;
+  }
+
+  function selectServer(id) {
+    window.location.href = '/servers/select?serverId=' + encodeURIComponent(id);
+  }
+
+  document.addEventListener('click', function(e) {
+    if (e.target.closest('#modal') === null && document.querySelector('#modal .modal-box')) {
+      document.getElementById('modal').innerHTML = '';
+    }
+  });
+</script>
+
+</body>
+</html>

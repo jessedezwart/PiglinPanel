@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+  <div th:if="${profile == null}" class="empty-state">No server selected.</div>
+
+  <div th:if="${profile != null and not profile.rcon.enabled}" class="empty-state">
+    RCON is not enabled for this server.
+  </div>
+
+  <div th:if="${profile != null and profile.rcon.enabled}" class="rcon-layout">
+    <div th:replace="~{fragments/rcon :: log-content}"></div>
+
+    <form hx-post="/rcon/command"
+          hx-target="#rcon-error"
+          hx-swap="innerHTML"
+          hx-on::after-request="this.reset()">
+      <input type="hidden" name="serverId" th:value="${serverId}">
+      <div class="rcon-input">
+        <input type="text" name="command" placeholder="Enter command..." autofocus autocomplete="off">
+        <button type="submit" class="btn btn-primary">Send</button>
+      </div>
+    </form>
+    <div id="rcon-error"></div>
+  </div>
+</div>
+
+<pre th:fragment="log-content"
+     id="rcon-log"
+     th:hx-get="'/rcon/log?serverId=' + ${serverId}"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML"
+     th:text="${logContent}"></pre>
+
+<span th:fragment="command-ok"></span>
+
+<div th:fragment="command-error" class="error-banner" th:text="${errorMessage}"></div>
+</body>
+</html>

@@ -61,6 +61,14 @@ public class ServerRegistryService {
     store.save(config);
   }
 
+  public void delete(String id) {
+    config.getServers().removeIf(s -> id.equals(s.getId()));
+    if (id.equals(config.getSelectedServerId())) {
+      config.setSelectedServerId(null);
+    }
+    store.save(config);
+  }
+
   private boolean refreshRcon(ServerProfile profile) {
     if (profile != null) {
       return rconConfigResolver.refresh(profile);

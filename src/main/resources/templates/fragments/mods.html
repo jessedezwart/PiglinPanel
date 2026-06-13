@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<div th:fragment="content">
+  <div th:if="${profile == null}" class="empty-state">No server selected.</div>
+
+  <div th:if="${profile != null}">
+    <div class="toolbar">
+      <button class="btn btn-primary"
+              hx-post="/mods/check-updates"
+              hx-include="#mods-server-id"
+              hx-target="#content"
+              hx-swap="innerHTML"
+              hx-indicator="#mods-spinner">
+        Check updates
+      </button>
+      <span id="mods-spinner" class="htmx-indicator"><span class="spinner"></span></span>
+
+      <label class="btn btn-sm" style="cursor:pointer">
+        Upload mod
+        <input type="file" accept=".jar" style="display:none"
+               hx-post="/mods/upload"
+               hx-encoding="multipart/form-data"
+               hx-include="#mods-server-id, #mods-folder-id"
+               hx-target="#content"
+               hx-swap="innerHTML"
+               name="file">
+      </label>
+    </div>
+
+    <input type="hidden" id="mods-server-id" name="serverId" th:value="${serverId}">
+    <input type="hidden" id="mods-folder-id" name="folderId"
+           th:value="${not #lists.isEmpty(profile.modFolders) ? profile.modFolders[0].id : ''}">
+
+    <div th:replace="~{fragments/mods :: mods-table}"></div>
+  </div>
+</div>
+
+<div th:fragment="mods-table">
+  <div th:if="${mods == null or #lists.isEmpty(mods)}" class="empty-state">No mods found.</div>
+
+  <form th:if="${mods != null and not #lists.isEmpty(mods)}"
+        hx-post="/mods/delete"
+        hx-target="#content"
+        hx-swap="innerHTML"
+        hx-confirm="Delete selected mods?">
+    <input type="hidden" name="serverId" th:value="${serverId}">
+    <div class="toolbar" style="margin-top: 0; margin-bottom: 10px;">
+      <button type="submit" class="btn btn-sm btn-danger">Delete selected</button>
+
+      <button type="button" class="btn btn-sm btn-success"
+              hx-post="/mods/update"
+              hx-include="form"
+              hx-target="#content"
+              hx-swap="innerHTML"
+              hx-confirm="Update selected mods?">
+        Update selected
+      </button>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:32px"></th>
+          <th>File</th>
+          <th>Folder</th>
+          <th>Size</th>
+          <th>Update</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr th:each="modFile : ${mods}">
+          <td><input type="checkbox" name="modPaths" th:value="${modFile.relativePath}"></td>
+          <td>
+            <span th:text="${modFile.fileName}"></span>
+            <span th:if="${modFile.archived}" class="badge badge-archived">archived</span>
+          </td>
+          <td th:text="${modFile.folderId}"></td>
+          <td th:text="${#numbers.formatDecimal(modFile.size / 1024.0, 1, 1) + ' KB'}"></td>
+          <td>
+            <span th:if="${modFile.update != null and modFile.update.available()}"
+                  class="badge badge-update"
+                  th:text="${modFile.update.latestVersionName()}"></span>
+            <span th:if="${modFile.update != null and modFile.update.projectName() != null and not modFile.update.available()}"
+                  class="badge-none"
+                  th:text="${modFile.update.projectName()}"></span>
+            <span th:if="${modFile.update == null}" class="badge-none">—</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </form>
+</div>
+</body>
+</html>
