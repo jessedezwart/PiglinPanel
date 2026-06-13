@@ -9,6 +9,51 @@
   <link rel="stylesheet" th:href="@{/css/main.css}">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/atom-one-light.min.css">
   <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>
+  <script>
+    hljs.registerLanguage('log', function() {
+      return {
+        name: 'Minecraft Log',
+        contains: [
+          // Timestamp [HH:MM:SS]
+          {
+            className: 'comment',
+            begin: /\[\d{2}:\d{2}:\d{2}\]/
+          },
+          // ERROR / FATAL level
+          {
+            className: 'keyword',
+            begin: /\b(ERROR|FATAL)\b/
+          },
+          // WARN level
+          {
+            className: 'title',
+            begin: /\bWARN\b/
+          },
+          // INFO level
+          {
+            className: 'string',
+            begin: /\bINFO\b/
+          },
+          // Player chat <Name>
+          {
+            className: 'built_in',
+            begin: /<\w+>/
+          },
+          // Java stack trace lines
+          {
+            className: 'comment',
+            begin: /^\s+at /,
+            end: /$/
+          },
+          // Numbers (entity counts, coords, etc.)
+          {
+            className: 'number',
+            begin: /\b\d+(\.\d+)?\b/
+          }
+        ]
+      };
+    });
+  </script>
   <script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
 </head>
 <body>
