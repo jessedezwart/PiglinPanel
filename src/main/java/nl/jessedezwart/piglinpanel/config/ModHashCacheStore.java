@@ -34,14 +34,14 @@ public class ModHashCacheStore {
     this.entries = loadEntries();
   }
 
-  public synchronized Optional<String> lookup(ServerProfile profile, FileEntry entry) {
+  public synchronized Optional<CachedMetadata> lookup(ServerProfile profile, FileEntry entry) {
     String key = key(profile, entry.path());
     CacheEntry cached = entries.get(key);
     if (cached == null) {
       return Optional.empty();
     }
     if (cached.matches(entry)) {
-      return Optional.of(cached.getSha1());
+      return Optional.of(new CachedMetadata(cached.getSha1(), cached.getProjectName()));
     }
     entries.remove(key);
     saveEntries();
@@ -49,9 +49,14 @@ public class ModHashCacheStore {
   }
 
   public synchronized void put(ServerProfile profile, FileEntry entry, String sha1) {
+    put(profile, entry, sha1, null);
+  }
+
+  public synchronized void put(
+      ServerProfile profile, FileEntry entry, String sha1, String projectName) {
     entries.put(
         key(profile, entry.path()),
-        new CacheEntry(sha1, entry.size(), entry.modifiedAt().toEpochMilli()));
+        new CacheEntry(sha1, projectName, entry.size(), entry.modifiedAt().toEpochMilli()));
     saveEntries();
   }
 
@@ -102,15 +107,20 @@ public class ModHashCacheStore {
     return profile.getId() + ":" + relativePath;
   }
 
+  public record CachedMetadata(String sha1, String projectName) {
+  }
+
   static class CacheEntry {
     private String sha1;
+    private String projectName;
     private long size;
     private long modifiedAtEpochMilli;
 
     CacheEntry() {}
 
-    CacheEntry(String sha1, long size, long modifiedAtEpochMilli) {
+    CacheEntry(String sha1, String projectName, long size, long modifiedAtEpochMilli) {
       this.sha1 = sha1;
+      this.projectName = projectName;
       this.size = size;
       this.modifiedAtEpochMilli = modifiedAtEpochMilli;
     }
@@ -121,6 +131,14 @@ public class ModHashCacheStore {
 
     public void setSha1(String sha1) {
       this.sha1 = sha1;
+    }
+
+    public String getProjectName() {
+      return projectName;
+    }
+
+    public void setProjectName(String projectName) {
+      this.projectName = projectName;
     }
 
     public long getSize() {

@@ -59,20 +59,27 @@ public class ModService {
     for (Candidate candidate : candidates) {
       ModFolder folder = candidate.folder();
       FileEntry entry = candidate.entry();
+      Optional<ModHashCacheStore.CachedMetadata> cachedMetadata =
+          modHashCacheStore.lookup(profile, entry);
+      String cachedProjectName =
+          cachedMetadata.map(ModHashCacheStore.CachedMetadata::projectName).orElse(null);
       String sha1 = null;
       if (checkUpdates) {
         try {
-          sha1 = resolveSha1(profile, fileSystem, entry);
+          sha1 = resolveSha1(profile, fileSystem, entry, cachedMetadata);
         } catch (IOException e) {
           log.warn("Failed to hash mod {}", entry.path(), e);
         }
       }
       boolean archived = entry.name().endsWith(".old");
-      ModUpdate update = null;
+      ModUpdate update = cachedProjectName == null ? null : projectMetadata(cachedProjectName);
       if (checkUpdates && !archived && sha1 != null) {
         try {
           Optional<ModUpdate> suggested = modrinthClient.findSuggestedUpdate(sha1);
-          update = suggested.orElse(null);
+          update = suggested.orElse(update);
+          if (update != null && update.projectName() != null && !update.projectName().isBlank()) {
+            modHashCacheStore.put(profile, entry, sha1, update.projectName());
+          }
         } catch (IOException e) {
           log.warn("Modrinth lookup failed for {}", entry.path(), e);
         } catch (InterruptedException e) {
@@ -128,16 +135,26 @@ public class ModService {
         update.latestVersionName());
     ServerFileSystem fileSystem = connectionService.fileSystem(profile);
     try {
-      byte[] bytes = modrinthClient.download(update.downloadUrl());
       String archivedName = nextArchiveName(modFile.relativePath());
+      final byte[] bytes = modrinthClient.download(update.downloadUrl());
       fileSystem.move(modFile.relativePath(), archivedName);
       modHashCacheStore.move(profile, modFile.relativePath(), archivedName);
       if (modFile.sha1() != null && !modFile.sha1().isBlank()) {
-        cacheWrittenFile(profile, fileSystem, archivedName, modFile.sha1());
+        cacheWrittenFile(
+            profile,
+            fileSystem,
+            archivedName,
+            modFile.sha1(),
+            update.projectName());
       }
       String updatedPath = joinPath(modFile.folderPath(), update.fileName());
       fileSystem.writeBytes(updatedPath, bytes);
-      cacheWrittenFile(profile, fileSystem, updatedPath, digest("SHA-1", bytes));
+      cacheWrittenFile(
+          profile,
+          fileSystem,
+          updatedPath,
+          digest("SHA-1", bytes),
+          update.projectName());
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new IOException("Interrupted while downloading mod update", e);
@@ -148,12 +165,15 @@ public class ModService {
     return relativePath.endsWith(".old") ? relativePath : relativePath + ".old";
   }
 
-  private String resolveSha1(ServerProfile profile, ServerFileSystem fileSystem, FileEntry entry)
+  private String resolveSha1(
+      ServerProfile profile,
+      ServerFileSystem fileSystem,
+      FileEntry entry,
+      Optional<ModHashCacheStore.CachedMetadata> cachedMetadata)
       throws IOException {
-    Optional<String> cached = modHashCacheStore.lookup(profile, entry);
-    if (cached.isPresent()) {
+    if (cachedMetadata.isPresent()) {
       log.info("Using cached hash for mod {}", entry.path());
-      return cached.get();
+      return cachedMetadata.get().sha1();
     }
     log.info("Hashing mod {}", entry.path());
     byte[] bytes = fileSystem.readBytes(entry.path());
@@ -166,8 +186,22 @@ public class ModService {
   private void cacheWrittenFile(
       ServerProfile profile, ServerFileSystem fileSystem, String relativePath, String sha1)
       throws IOException {
+    cacheWrittenFile(profile, fileSystem, relativePath, sha1, null);
+  }
+
+  private void cacheWrittenFile(
+      ServerProfile profile,
+      ServerFileSystem fileSystem,
+      String relativePath,
+      String sha1,
+      String projectName)
+      throws IOException {
     findEntry(fileSystem, relativePath)
-        .ifPresent(entry -> modHashCacheStore.put(profile, entry, sha1));
+        .ifPresent(entry -> modHashCacheStore.put(profile, entry, sha1, projectName));
+  }
+
+  private static ModUpdate projectMetadata(String projectName) {
+    return new ModUpdate(null, projectName, null, null, null, null, null, null);
   }
 
   private Optional<FileEntry> findEntry(ServerFileSystem fileSystem, String relativePath)

@@ -20,9 +20,10 @@ class ModHashCacheStoreTests {
     ServerProfile profile = new ServerProfile();
     FileEntry entry = new FileEntry("mods/example.jar", "example.jar", false, 123, Instant.now());
 
-    store.put(profile, entry, "abc123");
+    store.put(profile, entry, "abc123", "Example Project");
 
-    assertThat(store.lookup(profile, entry)).contains("abc123");
+    assertThat(store.lookup(profile, entry))
+        .contains(new ModHashCacheStore.CachedMetadata("abc123", "Example Project"));
   }
 
   @Test
@@ -33,7 +34,7 @@ class ModHashCacheStoreTests {
     Instant modifiedAt = Instant.now();
     FileEntry original = new FileEntry("mods/example.jar", "example.jar", false, 123, modifiedAt);
 
-    store.put(profile, original, "abc123");
+    store.put(profile, original, "abc123", "Example Project");
 
     FileEntry changed =
         new FileEntry("mods/example.jar", "example.jar", false, 456, modifiedAt.plusSeconds(1));
@@ -42,5 +43,19 @@ class ModHashCacheStoreTests {
     assertThat(new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json"))
             .lookup(profile, changed))
         .isEmpty();
+  }
+
+  @Test
+  void persistsProjectNameAcrossReloads() {
+    ModHashCacheStore store =
+        new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json"));
+    ServerProfile profile = new ServerProfile();
+    FileEntry entry = new FileEntry("mods/example.jar", "example.jar", false, 123, Instant.now());
+
+    store.put(profile, entry, "abc123", "Example Project");
+
+    assertThat(new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json"))
+            .lookup(profile, entry))
+        .contains(new ModHashCacheStore.CachedMetadata("abc123", "Example Project"));
   }
 }

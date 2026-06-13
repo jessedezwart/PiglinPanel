@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -65,6 +66,7 @@ class ModServiceTests {
                     "old",
                     "new",
                     "2.0.0",
+                    Instant.parse("2026-06-10T12:00:00Z"),
                     URI.create("https://example.com/mod.jar"),
                     "mod.jar")));
     ModService service =
@@ -79,6 +81,40 @@ class ModServiceTests {
         .singleElement()
         .extracting(ModFile -> ModFile.update().latestVersionName())
         .isEqualTo("2.0.0");
+  }
+
+  @Test
+  void reusesCachedProjectNameWithoutCheckingUpdates() throws Exception {
+    Files.createDirectories(tempDir.resolve("mods"));
+    Files.write(tempDir.resolve("mods/server.jar"), new byte[] {1, 2, 3});
+    ServerProfile profile = new ServerProfile();
+    profile.setRootPath(tempDir.toString());
+    ModrinthClient client = mock(ModrinthClient.class);
+    when(client.findSuggestedUpdate(anyString()))
+        .thenReturn(
+            Optional.of(
+                new ModUpdate(
+                    "project",
+                    "Project",
+                    "old",
+                    "old",
+                    "1.0.0",
+                    Instant.parse("2026-06-10T12:00:00Z"),
+                    null,
+                    null)));
+    ModService service =
+        new ModService(
+            new ServerConnectionService(),
+            client,
+            new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json")));
+
+    service.scan(profile, true);
+    var mods = service.scan(profile, false);
+
+    assertThat(mods)
+        .singleElement()
+        .extracting(mod -> mod.update().projectName())
+        .isEqualTo("Project");
   }
 
   @Test
