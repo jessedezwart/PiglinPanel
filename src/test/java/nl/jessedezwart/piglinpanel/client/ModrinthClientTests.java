@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -22,27 +23,33 @@ import org.springframework.web.reactive.function.client.WebClient;
 class ModrinthClientTests {
   @Test
   void retriesRateLimitedLookupsUsingExponentialBackoff() throws Exception {
-    AtomicInteger versionFileCalls = new AtomicInteger();
+    AtomicInteger versionFilesCalls = new AtomicInteger();
     HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
     server.createContext(
-        "/v2/version_file/test-sha1",
+        "/v2/version_files",
         exchange -> {
-          if (versionFileCalls.getAndIncrement() == 0) {
+          if (versionFilesCalls.getAndIncrement() == 0) {
             respond(exchange, 429, "{\"error\":\"rate_limited\"}");
             return;
           }
+          assertThat(exchange.getRequestMethod()).isEqualTo("POST");
+          String requestBody = readRequestBody(exchange);
+          assertThat(requestBody).contains("\"hashes\":[\"test-sha1\"]");
+          assertThat(requestBody).contains("\"algorithm\":\"sha1\"");
           respond(
               exchange,
               200,
               """
               {
-                "id":"current",
-                "project_id":"project",
-                "name":"Current",
-                "loaders":["fabric"],
-                "game_versions":["1.21.1"],
-                "files":[{"filename":"current.jar","url":"https://example.com/current.jar","primary":true}],
-                "date_published":"2026-06-01T10:00:00Z"
+                "test-sha1": {
+                  "id":"current",
+                  "project_id":"project",
+                  "name":"Current",
+                  "loaders":["fabric"],
+                  "game_versions":["1.21.1"],
+                  "files":[{"filename":"current.jar","url":"https://example.com/current.jar","primary":true}],
+                  "date_published":"2026-06-01T10:00:00Z"
+                }
               }
               """);
         });
@@ -50,10 +57,12 @@ class ModrinthClientTests {
         "/v2/project/project",
         exchange -> respond(exchange, 200, "{\"id\":\"project\",\"title\":\"Project\"}"));
     server.createContext(
-        "/v2/version_file/test-sha1/update",
+        "/v2/version_files/update",
         exchange -> {
           assertThat(exchange.getRequestMethod()).isEqualTo("POST");
           String requestBody = readRequestBody(exchange);
+          assertThat(requestBody).contains("\"hashes\":[\"test-sha1\"]");
+          assertThat(requestBody).contains("\"algorithm\":\"sha1\"");
           assertThat(requestBody).contains("\"loaders\":[\"fabric\"]");
           assertThat(requestBody).contains("\"game_versions\":[\"1.21.1\"]");
           respond(
@@ -61,13 +70,15 @@ class ModrinthClientTests {
               200,
               """
               {
-                "id":"latest",
-                "project_id":"project",
-                "name":"Latest",
-                "loaders":["fabric"],
-                "game_versions":["1.21.1"],
-                "files":[{"filename":"latest.jar","url":"https://example.com/latest.jar","primary":true}],
-                "date_published":"2026-06-10T12:00:00Z"
+                "test-sha1": {
+                  "id":"latest",
+                  "project_id":"project",
+                  "name":"Latest",
+                  "loaders":["fabric"],
+                  "game_versions":["1.21.1"],
+                  "files":[{"filename":"latest.jar","url":"https://example.com/latest.jar","primary":true}],
+                  "date_published":"2026-06-10T12:00:00Z"
+                }
               }
               """);
         });
@@ -89,7 +100,7 @@ class ModrinthClientTests {
       assertThat(update.get().projectName()).isEqualTo("Project");
       assertThat(update.get().lastUpdatedAt())
           .isEqualTo(Instant.parse("2026-06-10T12:00:00Z"));
-      assertThat(versionFileCalls.get()).isEqualTo(2);
+      assertThat(versionFilesCalls.get()).isEqualTo(2);
     } finally {
       server.stop(0);
     }
@@ -97,12 +108,12 @@ class ModrinthClientTests {
 
   @Test
   void failsWhenRateLimitRetriesAreExhausted() throws Exception {
-    AtomicInteger versionFileCalls = new AtomicInteger();
+    AtomicInteger versionFilesCalls = new AtomicInteger();
     HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
     server.createContext(
-        "/v2/version_file/test-sha1",
+        "/v2/version_files",
         exchange -> {
-          versionFileCalls.incrementAndGet();
+          versionFilesCalls.incrementAndGet();
           respond(exchange, 429, "{\"error\":\"rate_limited\"}");
         });
     server.start();
@@ -119,7 +130,67 @@ class ModrinthClientTests {
       assertThatThrownBy(() -> client.findSuggestedUpdate("test-sha1"))
           .isInstanceOf(IOException.class)
           .hasMessageContaining("HTTP 429 after retries");
-      assertThat(versionFileCalls.get()).isEqualTo(5);
+      assertThat(versionFilesCalls.get()).isEqualTo(5);
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void refreshesVersionMetadataWhenStoredDownloadUrlReturns404() throws Exception {
+    HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+    AtomicInteger staleDownloadCalls = new AtomicInteger();
+    server.createContext(
+        "/stale/latest.jar",
+        exchange -> {
+          staleDownloadCalls.incrementAndGet();
+          respond(exchange, 404, "{\"error\":\"not_found\"}");
+        });
+    server.createContext(
+        "/v2/project/project/version/latest",
+        exchange ->
+            respond(
+                exchange,
+                200,
+                """
+                {
+                  "id":"latest",
+                  "project_id":"project",
+                  "name":"Latest",
+                  "loaders":["fabric"],
+                  "game_versions":["1.21.1"],
+                  "files":[{"filename":"latest.jar","url":"http://localhost:%d/downloads/latest.jar","primary":true}],
+                  "date_published":"2026-06-10T12:00:00Z"
+                }
+                """.formatted(server.getAddress().getPort())));
+    server.createContext(
+        "/downloads/latest.jar",
+        exchange -> respond(exchange, 200, "jar-bytes"));
+    server.start();
+    try {
+      ModrinthClient client =
+          ModrinthClient.createForTesting(
+              new ObjectMapper(),
+              webClient(),
+              "http://localhost:" + server.getAddress().getPort() + "/v2",
+              0,
+              Duration.ofMillis(1),
+              Duration.ofMillis(1));
+
+      byte[] bytes =
+          client.downloadUpdate(
+              new ModUpdate(
+                  "project",
+                  "Project",
+                  "current",
+                  "latest",
+                  "Latest",
+                  Instant.parse("2026-06-10T12:00:00Z"),
+                  URI.create("http://localhost:" + server.getAddress().getPort() + "/stale/latest.jar"),
+                  "latest.jar"));
+
+      assertThat(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("jar-bytes");
+      assertThat(staleDownloadCalls.get()).isEqualTo(1);
     } finally {
       server.stop(0);
     }

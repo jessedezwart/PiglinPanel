@@ -1,6 +1,7 @@
 package nl.jessedezwart.piglinpanel.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -10,6 +11,7 @@ import java.time.Instant;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
@@ -57,18 +59,20 @@ class ModServiceTests {
     ServerProfile profile = new ServerProfile();
     profile.setRootPath(tempDir.toString());
     ModrinthClient client = mock(ModrinthClient.class);
-    when(client.findSuggestedUpdate(anyString()))
+    when(client.findSuggestedUpdates(anyList()))
         .thenReturn(
-            Optional.of(
-                new ModUpdate(
-                    "project",
-                    "Project",
-                    "old",
-                    "new",
-                    "2.0.0",
-                    Instant.parse("2026-06-10T12:00:00Z"),
-                    URI.create("https://example.com/mod.jar"),
-                    "mod.jar")));
+            java.util.Map.of(
+                "7037807198c22a7d2b0807371d763779a84fdfcf",
+                Optional.of(
+                    new ModUpdate(
+                        "project",
+                        "Project",
+                        "old",
+                        "new",
+                        "2.0.0",
+                        Instant.parse("2026-06-10T12:00:00Z"),
+                        URI.create("https://example.com/mod.jar"),
+                        "mod.jar"))));
     ModService service =
         new ModService(
             new ServerConnectionService(),
@@ -84,24 +88,62 @@ class ModServiceTests {
   }
 
   @Test
+  void streamsBulkUpdateResultsToCallbackAfterLookupCompletes() throws Exception {
+    Files.createDirectories(tempDir.resolve("mods"));
+    Files.write(tempDir.resolve("mods/server.jar"), new byte[] {1, 2, 3});
+    ServerProfile profile = new ServerProfile();
+    profile.setRootPath(tempDir.toString());
+    ModrinthClient client = mock(ModrinthClient.class);
+    when(client.findSuggestedUpdates(anyList()))
+        .thenReturn(
+            java.util.Map.of(
+                "7037807198c22a7d2b0807371d763779a84fdfcf",
+                Optional.of(
+                    new ModUpdate(
+                        "project",
+                        "Project",
+                        "old",
+                        "new",
+                        "2.0.0",
+                        Instant.parse("2026-06-10T12:00:00Z"),
+                        URI.create("https://example.com/mod.jar"),
+                        "mod.jar"))));
+    ModService service =
+        new ModService(
+            new ServerConnectionService(),
+            client,
+            new ModHashCacheStore(new ObjectMapper(), tempDir.resolve("mod-hashes.json")));
+    List<nl.jessedezwart.piglinpanel.model.ModFile> streamed = new ArrayList<>();
+
+    service.scan(profile, true, streamed::add);
+
+    assertThat(streamed)
+        .singleElement()
+        .extracting(mod -> mod.update().latestVersionName())
+        .isEqualTo("2.0.0");
+  }
+
+  @Test
   void reusesCachedProjectNameWithoutCheckingUpdates() throws Exception {
     Files.createDirectories(tempDir.resolve("mods"));
     Files.write(tempDir.resolve("mods/server.jar"), new byte[] {1, 2, 3});
     ServerProfile profile = new ServerProfile();
     profile.setRootPath(tempDir.toString());
     ModrinthClient client = mock(ModrinthClient.class);
-    when(client.findSuggestedUpdate(anyString()))
+    when(client.findSuggestedUpdates(anyList()))
         .thenReturn(
-            Optional.of(
-                new ModUpdate(
-                    "project",
-                    "Project",
-                    "old",
-                    "old",
-                    "1.0.0",
-                    Instant.parse("2026-06-10T12:00:00Z"),
-                    null,
-                    null)));
+            java.util.Map.of(
+                "7037807198c22a7d2b0807371d763779a84fdfcf",
+                Optional.of(
+                    new ModUpdate(
+                        "project",
+                        "Project",
+                        "old",
+                        "old",
+                        "1.0.0",
+                        Instant.parse("2026-06-10T12:00:00Z"),
+                        null,
+                        null))));
     ModService service =
         new ModService(
             new ServerConnectionService(),
@@ -127,7 +169,8 @@ class ModServiceTests {
     ServerConnectionService connectionService = mock(ServerConnectionService.class);
     when(connectionService.fileSystem(profile)).thenReturn(fileSystem);
     ModrinthClient client = mock(ModrinthClient.class);
-    when(client.findSuggestedUpdate(anyString())).thenReturn(Optional.empty());
+    when(client.findSuggestedUpdates(anyList()))
+        .thenReturn(java.util.Map.of("7037807198c22a7d2b0807371d763779a84fdfcf", Optional.empty()));
     ModService service =
         new ModService(
             connectionService,
@@ -149,7 +192,8 @@ class ModServiceTests {
     ServerConnectionService connectionService = mock(ServerConnectionService.class);
     when(connectionService.fileSystem(profile)).thenReturn(fileSystem);
     ModrinthClient client = mock(ModrinthClient.class);
-    when(client.findSuggestedUpdate(anyString())).thenReturn(Optional.empty());
+    when(client.findSuggestedUpdates(anyList()))
+        .thenReturn(java.util.Map.of("e0eae4bc0bb3d8031aca9205092a66f1dd07113a", Optional.empty()));
     ModService service =
         new ModService(
             connectionService,

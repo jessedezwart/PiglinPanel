@@ -5,7 +5,9 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
@@ -56,6 +58,7 @@ public class ModService {
       }
     }
     List<ModFile> mods = new ArrayList<>(candidates.size());
+    List<LookupCandidate> lookupCandidates = new ArrayList<>();
     for (Candidate candidate : candidates) {
       ModFolder folder = candidate.folder();
       FileEntry entry = candidate.entry();
@@ -74,18 +77,7 @@ public class ModService {
       boolean archived = entry.name().endsWith(".old");
       ModUpdate update = cachedProjectName == null ? null : projectMetadata(cachedProjectName);
       if (checkUpdates && !archived && sha1 != null) {
-        try {
-          Optional<ModUpdate> suggested = modrinthClient.findSuggestedUpdate(sha1);
-          update = suggested.orElse(update);
-          if (update != null && update.projectName() != null && !update.projectName().isBlank()) {
-            modHashCacheStore.put(profile, entry, sha1, update.projectName());
-          }
-        } catch (IOException e) {
-          log.warn("Modrinth lookup failed for {}", entry.path(), e);
-        } catch (InterruptedException e) {
-          Thread.currentThread().interrupt();
-          throw new IOException("Interrupted while checking Modrinth", e);
-        }
+        lookupCandidates.add(new LookupCandidate(entry, sha1));
       }
       ModFile modFile = new ModFile(
           folder.getId(),
@@ -97,15 +89,24 @@ public class ModService {
           sha1,
           update);
       mods.add(modFile);
-      if (onMod != null) {
+      if (onMod != null && !checkUpdates) {
         onMod.accept(modFile);
       }
+    }
+    if (checkUpdates && !lookupCandidates.isEmpty()) {
+      applySuggestedUpdates(profile, mods, lookupCandidates);
+    }
+    if (checkUpdates && onMod != null) {
+      mods.forEach(onMod);
     }
     log.info("Scan complete for {}: {} mods", profile.getName(), mods.size());
     return mods;
   }
 
   private record Candidate(ModFolder folder, FileEntry entry) {
+  }
+
+  private record LookupCandidate(FileEntry entry, String sha1) {
   }
 
   public void upload(ServerProfile profile, ModFolder folder, String fileName, byte[] bytes)
@@ -136,7 +137,7 @@ public class ModService {
     ServerFileSystem fileSystem = connectionService.fileSystem(profile);
     try {
       String archivedName = nextArchiveName(modFile.relativePath());
-      final byte[] bytes = modrinthClient.download(update.downloadUrl());
+      final byte[] bytes = modrinthClient.downloadUpdate(update);
       fileSystem.move(modFile.relativePath(), archivedName);
       modHashCacheStore.move(profile, modFile.relativePath(), archivedName);
       if (modFile.sha1() != null && !modFile.sha1().isBlank()) {
@@ -163,6 +164,54 @@ public class ModService {
 
   static String nextArchiveName(String relativePath) {
     return relativePath.endsWith(".old") ? relativePath : relativePath + ".old";
+  }
+
+  private void applySuggestedUpdates(
+      ServerProfile profile, List<ModFile> mods, List<LookupCandidate> lookupCandidates)
+      throws IOException {
+    Map<String, Optional<ModUpdate>> suggestedUpdates;
+    List<String> hashes = lookupCandidates.stream()
+        .map(LookupCandidate::sha1)
+        .distinct()
+        .toList();
+    try {
+      suggestedUpdates = modrinthClient.findSuggestedUpdates(hashes);
+    } catch (IOException e) {
+      log.warn("Modrinth bulk lookup failed for {}", profile.getName(), e);
+      return;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new IOException("Interrupted while checking Modrinth", e);
+    }
+
+    Map<String, LookupCandidate> candidatesByPath = new LinkedHashMap<>();
+    for (LookupCandidate candidate : lookupCandidates) {
+      candidatesByPath.put(candidate.entry().path(), candidate);
+    }
+    for (int index = 0; index < mods.size(); index++) {
+      ModFile mod = mods.get(index);
+      LookupCandidate lookupCandidate = candidatesByPath.get(mod.relativePath());
+      if (lookupCandidate == null) {
+        continue;
+      }
+      ModUpdate update = suggestedUpdates
+          .getOrDefault(lookupCandidate.sha1(), Optional.empty())
+          .orElse(mod.update());
+      if (update != null && update.projectName() != null && !update.projectName().isBlank()) {
+        modHashCacheStore.put(profile, lookupCandidate.entry(), lookupCandidate.sha1(), update.projectName());
+      }
+      mods.set(
+          index,
+          new ModFile(
+              mod.folderId(),
+              mod.folderPath(),
+              mod.relativePath(),
+              mod.fileName(),
+              mod.size(),
+              mod.archived(),
+              mod.sha1(),
+              update));
+    }
   }
 
   private String resolveSha1(

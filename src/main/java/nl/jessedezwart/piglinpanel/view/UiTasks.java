@@ -5,8 +5,11 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import javafx.application.Platform;
 import javafx.scene.control.Alert;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 final class UiTasks {
+  private static final Logger log = LoggerFactory.getLogger(UiTasks.class);
   private static final ExecutorService EXECUTOR = Executors
       .newCachedThreadPool(Thread.ofVirtual().name("piglinpanel-", 0).factory());
 
@@ -58,6 +61,7 @@ final class UiTasks {
   }
 
   static void error(Exception e) {
+    log.error("Background task failed", e);
     Alert alert = new Alert(Alert.AlertType.ERROR);
     alert.setTitle("Piglinpanel");
     String header = e.getMessage();
