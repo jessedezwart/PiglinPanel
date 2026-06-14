@@ -66,37 +66,26 @@ public class ModrinthClient {
     }
 
     Map<String, Version> currentVersions = versionsByHashes(requestedHashes);
-    Map<String, String> projectNames = new LinkedHashMap<>();
+
+    List<String> projectIds = currentVersions.values().stream()
+        .map(Version::projectId)
+        .filter(id -> id != null && !id.isBlank())
+        .distinct()
+        .toList();
+    Map<String, Project> projects = getProjects(projectIds);
+
     Map<UpdateCriteria, List<String>> hashesByCriteria = new LinkedHashMap<>();
     for (Map.Entry<String, Version> entry : currentVersions.entrySet()) {
-      Version version = entry.getValue();
-      projectNames.computeIfAbsent(
-          version.projectId(),
-          projectId -> {
-            try {
-              return project(projectId).map(Project::title).orElse(projectId);
-            } catch (IOException e) {
-              throw new ProjectLookupRuntimeException(projectId, e);
-            }
-          });
       hashesByCriteria
-          .computeIfAbsent(UpdateCriteria.from(version), ignored -> new ArrayList<>())
+          .computeIfAbsent(UpdateCriteria.from(entry.getValue()), ignored -> new ArrayList<>())
           .add(entry.getKey());
     }
 
     Map<String, Version> latestVersions = new LinkedHashMap<>();
-    try {
-      for (Map.Entry<UpdateCriteria, List<String>> entry : hashesByCriteria.entrySet()) {
-        UpdateCriteria criteria = entry.getKey();
-        latestVersions.putAll(
-            latestVersionsForHashes(entry.getValue(), criteria.loaders(), criteria.gameVersions()));
-      }
-    } catch (ProjectLookupRuntimeException e) {
-      Throwable cause = e.getCause();
-      if (cause instanceof IOException ioException) {
-        throw ioException;
-      }
-      throw new IOException("Modrinth project lookup failed for " + e.projectId(), cause);
+    for (Map.Entry<UpdateCriteria, List<String>> entry : hashesByCriteria.entrySet()) {
+      UpdateCriteria criteria = entry.getKey();
+      latestVersions.putAll(
+          latestVersionsForHashes(entry.getValue(), criteria.loaders(), criteria.gameVersions()));
     }
 
     Map<String, Optional<ModUpdate>> updates = new LinkedHashMap<>();
@@ -106,12 +95,27 @@ public class ModrinthClient {
         updates.put(sha1, Optional.empty());
         continue;
       }
-      String projectName =
-          projectNames.getOrDefault(currentVersion.projectId(), currentVersion.projectId());
+      Project project = projects.get(currentVersion.projectId());
       Version latestVersion = latestVersions.get(sha1);
-      updates.put(sha1, Optional.of(toModUpdate(currentVersion, latestVersion, projectName)));
+      updates.put(sha1, Optional.of(toModUpdate(currentVersion, latestVersion, project)));
     }
     return updates;
+  }
+
+  public Map<String, Project> getProjects(List<String> projectIds) throws IOException {
+    if (projectIds == null || projectIds.isEmpty()) {
+      return Map.of();
+    }
+    String idsJson = objectMapper.writeValueAsString(projectIds);
+    String uri = apiBaseUrl + "/projects?ids=" + URLEncoder.encode(idsJson, StandardCharsets.UTF_8);
+    Response response = get(uri);
+    requireSuccess(response, uri);
+    List<Project> projectList = objectMapper.readValue(
+        response.bodyAsString(),
+        objectMapper.getTypeFactory().constructCollectionType(List.class, Project.class));
+    return projectList.stream()
+        .filter(p -> p.id() != null)
+        .collect(Collectors.toMap(Project::id, p -> p, (a, b) -> a, LinkedHashMap::new));
   }
 
   public byte[] download(URI uri) throws IOException {
@@ -172,16 +176,6 @@ public class ModrinthClient {
     return download(URI.create(file.url()));
   }
 
-  private Optional<Project> project(String projectId) throws IOException {
-    String uri = apiBaseUrl + "/project/" + encode(projectId);
-    Response response = get(uri);
-    if (response.statusCode() == 404) {
-      return Optional.empty();
-    }
-    requireSuccess(response, uri);
-    return Optional.of(objectMapper.readValue(response.bodyAsString(), Project.class));
-  }
-
   private Version version(String projectId, String versionId) throws IOException {
     String uri = apiBaseUrl + "/project/" + encode(projectId) + "/version/" + encode(versionId);
     Response response = get(uri);
@@ -227,7 +221,12 @@ public class ModrinthClient {
     return List.of();
   }
 
-  private ModUpdate toModUpdate(Version currentVersion, Version latestVersion, String projectName) {
+  private ModUpdate toModUpdate(Version currentVersion, Version latestVersion, Project project) {
+    String projectName = project != null ? project.title() : null;
+    String iconUrl = project != null ? project.iconUrl() : null;
+    String clientSide = project != null ? project.clientSide() : null;
+    String serverSide = project != null ? project.serverSide() : null;
+    long downloads = project != null ? project.downloads() : 0L;
     if (latestVersion == null) {
       return new ModUpdate(
           currentVersion.projectId(),
@@ -237,7 +236,11 @@ public class ModrinthClient {
           currentVersion.name(),
           currentVersion.publishedAtInstant(),
           null,
-          null);
+          null,
+          iconUrl,
+          clientSide,
+          serverSide,
+          downloads);
     }
     File latestFile = latestVersion.primaryFile().orElse(null);
     URI downloadUrl = null;
@@ -254,7 +257,11 @@ public class ModrinthClient {
         latestVersion.name(),
         latestVersion.publishedAtInstant(),
         downloadUrl,
-        fileName);
+        fileName,
+        iconUrl,
+        clientSide,
+        serverSide,
+        downloads);
   }
 
   private Map<String, Version> readVersionMap(String body) throws IOException {
@@ -279,8 +286,8 @@ public class ModrinthClient {
       return restClient
           .get()
           .uri(URI.create(uri))
-          .exchange(
-              (req, resp) -> new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
+          .exchange((req, resp) ->
+              new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
     } catch (RestClientException e) {
       throw new IOException("Modrinth request failed for " + uri, e);
     }
@@ -293,8 +300,8 @@ public class ModrinthClient {
           .uri(URI.create(uri))
           .contentType(MediaType.APPLICATION_JSON)
           .body(body)
-          .exchange(
-              (req, resp) -> new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
+          .exchange((req, resp) ->
+              new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
     } catch (RestClientException e) {
       throw new IOException("Modrinth request failed for " + uri, e);
     }
@@ -341,19 +348,6 @@ public class ModrinthClient {
     }
   }
 
-  private static final class ProjectLookupRuntimeException extends RuntimeException {
-    private final String projectId;
-
-    private ProjectLookupRuntimeException(String projectId, Throwable cause) {
-      super(cause);
-      this.projectId = projectId;
-    }
-
-    private String projectId() {
-      return projectId;
-    }
-  }
-
   private record UpdateCriteria(List<String> loaders, List<String> gameVersions) {
     private static UpdateCriteria from(Version version) {
       return new UpdateCriteria(
@@ -362,7 +356,13 @@ public class ModrinthClient {
   }
 
   @JsonIgnoreProperties(ignoreUnknown = true)
-  public record Project(String id, String title) {}
+  public record Project(
+      String id,
+      String title,
+      @JsonProperty("icon_url") String iconUrl,
+      @JsonProperty("client_side") String clientSide,
+      @JsonProperty("server_side") String serverSide,
+      long downloads) {}
 
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Version(

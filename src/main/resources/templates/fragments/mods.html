@@ -15,7 +15,8 @@
                  hx-include="#mods-server-id"
                  hx-target="#content"
                  hx-swap="innerHTML"
-                 hx-indicator="#mods-spinner">
+                 hx-indicator="#mods-spinner"
+                 hx-on:htmx:before-request="setModsDisabled(true)">
         <wa-icon slot="prefix" name="arrows-rotate"></wa-icon>
         Check updates
       </wa-button>
@@ -59,25 +60,60 @@
 
     <form id="mods-form" th:if="${mods != null and not #lists.isEmpty(mods)}">
       <input type="hidden" name="serverId" th:value="${serverId}">
+
+      <div th:with="availableUpdates=${mods.?[update != null &amp;&amp; update.available()]}"
+           th:if="${not #lists.isEmpty(availableUpdates)}"
+           style="margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+        <wa-icon name="circle-exclamation" style="color: var(--wa-color-warning-600);"></wa-icon>
+        <span th:text="${#lists.size(availableUpdates)} + ' mod(s) have updates available'"></span>
+      </div>
+
       <table>
         <thead>
           <tr>
             <th style="width:32px"><input id="cb-select-all" type="checkbox" title="Select all"></th>
+            <th style="width:28px"></th>
             <th>File</th>
             <th>Folder</th>
             <th>Size</th>
+            <th>Client</th>
+            <th>Server</th>
+            <th>Downloads</th>
             <th>Update</th>
           </tr>
         </thead>
         <tbody>
           <tr th:each="modFile : ${mods}">
             <td><input class="mod-checkbox" type="checkbox" name="modPaths" th:value="${modFile.relativePath}"></td>
+            <td style="padding: 0 4px;">
+              <img th:if="${modFile.update != null and modFile.update.iconUrl() != null}"
+                   th:src="${modFile.update.iconUrl()}"
+                   width="24" height="24"
+                   style="border-radius:4px;object-fit:cover;display:block;"
+                   onerror="this.style.display='none'"
+                   alt="">
+            </td>
             <td>
               <span th:text="${modFile.fileName}"></span>
               <wa-badge th:if="${modFile.archived}" variant="neutral">archived</wa-badge>
             </td>
             <td th:text="${modFile.folderName}"></td>
             <td th:text="${#numbers.formatDecimal(modFile.size / 1024.0, 1, 1) + ' KB'}"></td>
+            <td>
+              <wa-badge th:if="${modFile.update != null and modFile.update.clientSide() != null and modFile.update.clientSide() != 'unknown'}"
+                        th:variant="${modFile.update.clientSide() == 'required' ? 'brand' : (modFile.update.clientSide() == 'unsupported' ? 'danger' : 'neutral')}"
+                        th:text="${modFile.update.clientSide()}"></wa-badge>
+            </td>
+            <td>
+              <wa-badge th:if="${modFile.update != null and modFile.update.serverSide() != null and modFile.update.serverSide() != 'unknown'}"
+                        th:variant="${modFile.update.serverSide() == 'required' ? 'brand' : (modFile.update.serverSide() == 'unsupported' ? 'danger' : 'neutral')}"
+                        th:text="${modFile.update.serverSide()}"></wa-badge>
+            </td>
+            <td>
+              <span th:if="${modFile.update != null and modFile.update.downloads() > 0}"
+                    th:text="${modFile.update.formattedDownloads()}"
+                    style="color: var(--text-dim); font-size: 0.85rem;"></span>
+            </td>
             <td>
               <wa-badge th:if="${modFile.update != null and modFile.update.available()}"
                         variant="warning"
@@ -97,6 +133,12 @@
       document.getElementById('upload-mod-btn')?.addEventListener('click', () => {
         document.getElementById('mod-upload-input').click();
       });
+
+      function setModsDisabled(disabled) {
+        document.querySelectorAll('.toolbar wa-button, #mods-form input').forEach(el => {
+          el.disabled = disabled;
+        });
+      }
 
       (function () {
         const form = document.getElementById('mods-form');

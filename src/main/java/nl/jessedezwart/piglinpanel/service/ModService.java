@@ -53,7 +53,7 @@ public class ModService {
     for (ModFolder folder : profile.getModFolders()) {
       for (FileEntry entry : fileSystem.list(folder.getPath())) {
         if (entry.directory()
-            || (!entry.name().endsWith(".jar") && !entry.name().endsWith(".jar.old"))) {
+            || (!entry.name().endsWith(".jar") && !entry.name().endsWith(".jar.disabled"))) {
           continue;
         }
         candidates.add(new Candidate(folder, entry));
@@ -64,10 +64,8 @@ public class ModService {
     for (Candidate candidate : candidates) {
       ModFolder folder = candidate.folder();
       FileEntry entry = candidate.entry();
-      Optional<ModHashCacheStore.CachedMetadata> cachedMetadata =
-          modHashCacheStore.lookup(profile, entry);
-      String cachedProjectName =
-          cachedMetadata.map(ModHashCacheStore.CachedMetadata::projectName).orElse(null);
+      Optional<ModHashCacheStore.CachedMetadata> cachedMetadata = modHashCacheStore.lookup(profile, entry);
+      String cachedProjectName = cachedMetadata.map(ModHashCacheStore.CachedMetadata::projectName).orElse(null);
       String sha1 = null;
       if (checkUpdates) {
         try {
@@ -76,7 +74,7 @@ public class ModService {
           log.warn("Failed to hash mod {}", entry.path(), e);
         }
       }
-      boolean archived = entry.name().endsWith(".old");
+      boolean archived = entry.name().endsWith(".disabled");
       ModUpdate update = cachedProjectName == null ? null : projectMetadata(cachedProjectName);
       if (checkUpdates && !archived && sha1 != null) {
         lookupCandidates.add(new LookupCandidate(entry, sha1));
@@ -123,7 +121,8 @@ public class ModService {
     List<ModFile> mods = scan(profile, false);
     return mods.stream().map(mod -> {
       ModUpdate update = profileUpdates.get(mod.relativePath());
-      if (update == null) return mod;
+      if (update == null)
+        return mod;
       return new ModFile(mod.folderId(), mod.folderName(), mod.folderPath(),
           mod.relativePath(), mod.fileName(), mod.size(), mod.archived(),
           mod.sha1(), update);
@@ -176,7 +175,7 @@ public class ModService {
   }
 
   static String nextArchiveName(String relativePath) {
-    return relativePath.endsWith(".old") ? relativePath : relativePath + ".old";
+    return relativePath.endsWith(".disabled") ? relativePath : relativePath + ".disabled";
   }
 
   private void applySuggestedUpdates(
@@ -262,7 +261,8 @@ public class ModService {
   }
 
   private static ModUpdate projectMetadata(String projectName) {
-    return new ModUpdate(null, projectName, null, null, null, null, null, null);
+    return new ModUpdate(
+        null, projectName, null, null, null, null, null, null, null, null, null, 0L);
   }
 
   private Optional<FileEntry> findEntry(ServerFileSystem fileSystem, String relativePath)
