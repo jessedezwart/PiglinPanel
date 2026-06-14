@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.io.Serializable;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,7 @@ import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -67,11 +69,12 @@ public class ModrinthClient {
 
     Map<String, Version> currentVersions = versionsByHashes(requestedHashes);
 
-    List<String> projectIds = currentVersions.values().stream()
-        .map(Version::projectId)
-        .filter(id -> id != null && !id.isBlank())
-        .distinct()
-        .toList();
+    List<String> projectIds =
+        currentVersions.values().stream()
+            .map(Version::projectId)
+            .filter(id -> id != null && !id.isBlank())
+            .distinct()
+            .toList();
     Map<String, Project> projects = getProjects(projectIds);
 
     Map<UpdateCriteria, List<String>> hashesByCriteria = new LinkedHashMap<>();
@@ -102,6 +105,10 @@ public class ModrinthClient {
     return updates;
   }
 
+  @Cacheable(
+      value = "modrinth-projects",
+      key = "T(nl.jessedezwart.piglinpanel.client.ModrinthClient).projectsCacheKey(#projectIds)",
+      condition = "!#projectIds.isEmpty()")
   public Map<String, Project> getProjects(List<String> projectIds) throws IOException {
     if (projectIds == null || projectIds.isEmpty()) {
       return Map.of();
@@ -110,9 +117,10 @@ public class ModrinthClient {
     String uri = apiBaseUrl + "/projects?ids=" + URLEncoder.encode(idsJson, StandardCharsets.UTF_8);
     Response response = get(uri);
     requireSuccess(response, uri);
-    List<Project> projectList = objectMapper.readValue(
-        response.bodyAsString(),
-        objectMapper.getTypeFactory().constructCollectionType(List.class, Project.class));
+    List<Project> projectList =
+        objectMapper.readValue(
+            response.bodyAsString(),
+            objectMapper.getTypeFactory().constructCollectionType(List.class, Project.class));
     return projectList.stream()
         .filter(p -> p.id() != null)
         .collect(Collectors.toMap(Project::id, p -> p, (a, b) -> a, LinkedHashMap::new));
@@ -275,10 +283,7 @@ public class ModrinthClient {
         .filter(entry -> entry.getKey() != null && entry.getValue() != null)
         .collect(
             Collectors.toMap(
-                Map.Entry::getKey,
-                Map.Entry::getValue,
-                (left, right) -> left,
-                LinkedHashMap::new));
+                Map.Entry::getKey, Map.Entry::getValue, (left, right) -> left, LinkedHashMap::new));
   }
 
   private Response get(String uri) throws IOException {
@@ -286,8 +291,9 @@ public class ModrinthClient {
       return restClient
           .get()
           .uri(URI.create(uri))
-          .exchange((req, resp) ->
-              new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
+          .exchange(
+              (req, resp) ->
+                  new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
     } catch (RestClientException e) {
       throw new IOException("Modrinth request failed for " + uri, e);
     }
@@ -300,8 +306,9 @@ public class ModrinthClient {
           .uri(URI.create(uri))
           .contentType(MediaType.APPLICATION_JSON)
           .body(body)
-          .exchange((req, resp) ->
-              new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
+          .exchange(
+              (req, resp) ->
+                  new Response(resp.getStatusCode().value(), resp.getBody().readAllBytes()));
     } catch (RestClientException e) {
       throw new IOException("Modrinth request failed for " + uri, e);
     }
@@ -323,8 +330,7 @@ public class ModrinthClient {
   }
 
   private static boolean isHttpStatus(IOException exception, int statusCode) {
-    return exception.getMessage() != null
-        && exception.getMessage().contains("HTTP " + statusCode);
+    return exception.getMessage() != null && exception.getMessage().contains("HTTP " + statusCode);
   }
 
   private void logBulkResponse(String uri, Response response) {
@@ -355,6 +361,10 @@ public class ModrinthClient {
     }
   }
 
+  public static String projectsCacheKey(List<String> ids) {
+    return ids.stream().sorted().collect(Collectors.joining(","));
+  }
+
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Project(
       String id,
@@ -362,7 +372,8 @@ public class ModrinthClient {
       @JsonProperty("icon_url") String iconUrl,
       @JsonProperty("client_side") String clientSide,
       @JsonProperty("server_side") String serverSide,
-      long downloads) {}
+      long downloads)
+      implements Serializable {}
 
   @JsonIgnoreProperties(ignoreUnknown = true)
   public record Version(

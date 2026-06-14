@@ -9,10 +9,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import nl.jessedezwart.piglinpanel.client.ModrinthClient;
-import nl.jessedezwart.piglinpanel.config.ModHashCacheStore;
 import nl.jessedezwart.piglinpanel.filesystem.ServerFileSystem;
 import nl.jessedezwart.piglinpanel.model.FileEntry;
 import nl.jessedezwart.piglinpanel.model.ModFile;
@@ -21,6 +19,9 @@ import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -28,24 +29,19 @@ public class ModService {
   private static final Logger log = LoggerFactory.getLogger(ModService.class);
   private final ServerConnectionService connectionService;
   private final ModrinthClient modrinthClient;
-  private final ModHashCacheStore modHashCacheStore;
-  private final Map<String, Map<String, ModUpdate>> cachedUpdates = new ConcurrentHashMap<>();
 
-  public ModService(
-      ServerConnectionService connectionService,
-      ModrinthClient modrinthClient,
-      ModHashCacheStore modHashCacheStore) {
+  @Autowired @Lazy ModService self;
+
+  public ModService(ServerConnectionService connectionService, ModrinthClient modrinthClient) {
     this.connectionService = connectionService;
     this.modrinthClient = modrinthClient;
-    this.modHashCacheStore = modHashCacheStore;
   }
 
   public List<ModFile> scan(ServerProfile profile, boolean checkUpdates) throws IOException {
     return scan(profile, checkUpdates, null);
   }
 
-  public List<ModFile> scan(
-      ServerProfile profile, boolean checkUpdates, Consumer<ModFile> onMod)
+  public List<ModFile> scan(ServerProfile profile, boolean checkUpdates, Consumer<ModFile> onMod)
       throws IOException {
     log.info("Scanning mods for {} (checkUpdates={})", profile.getName(), checkUpdates);
     ServerFileSystem fileSystem = connectionService.fileSystem(profile);
@@ -64,47 +60,38 @@ public class ModService {
     for (Candidate candidate : candidates) {
       ModFolder folder = candidate.folder();
       FileEntry entry = candidate.entry();
-      Optional<ModHashCacheStore.CachedMetadata> cachedMetadata = modHashCacheStore.lookup(profile, entry);
-      String cachedProjectName = cachedMetadata.map(ModHashCacheStore.CachedMetadata::projectName).orElse(null);
       String sha1 = null;
       if (checkUpdates) {
         try {
-          sha1 = resolveSha1(profile, fileSystem, entry, cachedMetadata);
+          sha1 = self.resolveSha1(profile, fileSystem, entry);
         } catch (IOException e) {
           log.warn("Failed to hash mod {}", entry.path(), e);
         }
       }
       boolean archived = entry.name().endsWith(".disabled");
-      ModUpdate update = cachedProjectName == null ? null : projectMetadata(cachedProjectName);
       if (checkUpdates && !archived && sha1 != null) {
         lookupCandidates.add(new LookupCandidate(entry, sha1));
       }
-      ModFile modFile = new ModFile(
-          folder.getId(),
-          folder.getName(),
-          folder.getPath(),
-          entry.path(),
-          entry.name(),
-          entry.size(),
-          archived,
-          sha1,
-          update);
-      if (!archived) {
-        mods.add(modFile);
-        if (onMod != null && !checkUpdates) {
-          onMod.accept(modFile);
-        }
+      ModFile modFile =
+          new ModFile(
+              folder.getId(),
+              folder.getName(),
+              folder.getPath(),
+              entry.path(),
+              entry.name(),
+              entry.size(),
+              archived,
+              sha1,
+              null);
+      mods.add(modFile);
+      if (onMod != null && !checkUpdates) {
+        onMod.accept(modFile);
       }
     }
-    if (checkUpdates && !lookupCandidates.isEmpty()) {
-      applySuggestedUpdates(profile, mods, lookupCandidates);
-      Map<String, ModUpdate> profileUpdates = new ConcurrentHashMap<>();
-      for (ModFile mod : mods) {
-        if (mod.update() != null) {
-          profileUpdates.put(mod.relativePath(), mod.update());
-        }
+    if (checkUpdates) {
+      if (!lookupCandidates.isEmpty()) {
+        applySuggestedUpdates(mods, lookupCandidates);
       }
-      cachedUpdates.put(profile.getId(), profileUpdates);
     }
     if (checkUpdates && onMod != null) {
       mods.forEach(onMod);
@@ -113,27 +100,9 @@ public class ModService {
     return mods;
   }
 
-  public List<ModFile> scanForUpdate(ServerProfile profile) throws IOException {
-    Map<String, ModUpdate> profileUpdates = cachedUpdates.get(profile.getId());
-    if (profileUpdates == null || profileUpdates.isEmpty()) {
-      return scan(profile, true);
-    }
-    List<ModFile> mods = scan(profile, false);
-    return mods.stream().map(mod -> {
-      ModUpdate update = profileUpdates.get(mod.relativePath());
-      if (update == null)
-        return mod;
-      return new ModFile(mod.folderId(), mod.folderName(), mod.folderPath(),
-          mod.relativePath(), mod.fileName(), mod.size(), mod.archived(),
-          mod.sha1(), update);
-    }).toList();
-  }
+  private record Candidate(ModFolder folder, FileEntry entry) {}
 
-  private record Candidate(ModFolder folder, FileEntry entry) {
-  }
-
-  private record LookupCandidate(FileEntry entry, String sha1) {
-  }
+  private record LookupCandidate(FileEntry entry, String sha1) {}
 
   public void upload(ServerProfile profile, ModFolder folder, String fileName, byte[] bytes)
       throws IOException {
@@ -141,13 +110,11 @@ public class ModService {
     ServerFileSystem fileSystem = connectionService.fileSystem(profile);
     String relativePath = joinPath(folder.getPath(), fileName);
     fileSystem.writeBytes(relativePath, bytes);
-    cacheWrittenFile(profile, fileSystem, relativePath, digest("SHA-1", bytes));
   }
 
   public void delete(ServerProfile profile, ModFile modFile) throws IOException {
     log.info("Deleting {} from {}", modFile.relativePath(), profile.getName());
     connectionService.fileSystem(profile).delete(modFile.relativePath());
-    modHashCacheStore.remove(profile, modFile.relativePath());
   }
 
   public void applyUpdate(ServerProfile profile, ModFile modFile) throws IOException {
@@ -164,32 +131,22 @@ public class ModService {
     String archivedName = nextArchiveName(modFile.relativePath());
     final byte[] bytes = modrinthClient.downloadUpdate(update);
     fileSystem.move(modFile.relativePath(), archivedName);
-    modHashCacheStore.move(profile, modFile.relativePath(), archivedName);
-    if (modFile.sha1() != null && !modFile.sha1().isBlank()) {
-      cacheWrittenFile(profile, fileSystem, archivedName, modFile.sha1(), update.projectName());
-    }
     String updatedPath = joinPath(modFile.folderPath(), update.fileName());
     fileSystem.writeBytes(updatedPath, bytes);
-    cacheWrittenFile(
-        profile, fileSystem, updatedPath, digest("SHA-1", bytes), update.projectName());
   }
 
   static String nextArchiveName(String relativePath) {
     return relativePath.endsWith(".disabled") ? relativePath : relativePath + ".disabled";
   }
 
-  private void applySuggestedUpdates(
-      ServerProfile profile, List<ModFile> mods, List<LookupCandidate> lookupCandidates)
+  private void applySuggestedUpdates(List<ModFile> mods, List<LookupCandidate> lookupCandidates)
       throws IOException {
+    List<String> hashes = lookupCandidates.stream().map(LookupCandidate::sha1).distinct().toList();
     Map<String, Optional<ModUpdate>> suggestedUpdates;
-    List<String> hashes = lookupCandidates.stream()
-        .map(LookupCandidate::sha1)
-        .distinct()
-        .toList();
     try {
       suggestedUpdates = modrinthClient.findSuggestedUpdates(hashes);
     } catch (IOException e) {
-      log.warn("Modrinth bulk lookup failed for {}", profile.getName(), e);
+      log.warn("Modrinth bulk lookup failed", e);
       return;
     }
 
@@ -203,13 +160,10 @@ public class ModService {
       if (lookupCandidate == null) {
         continue;
       }
-      ModUpdate update = suggestedUpdates
-          .getOrDefault(lookupCandidate.sha1(), Optional.empty())
-          .orElse(mod.update());
-      if (update != null && update.projectName() != null && !update.projectName().isBlank()) {
-        modHashCacheStore.put(
-            profile, lookupCandidate.entry(), lookupCandidate.sha1(), update.projectName());
-      }
+      ModUpdate modUpdate =
+          suggestedUpdates
+              .getOrDefault(lookupCandidate.sha1(), Optional.empty())
+              .orElse(mod.update());
       mods.set(
           index,
           new ModFile(
@@ -221,56 +175,22 @@ public class ModService {
               mod.size(),
               mod.archived(),
               mod.sha1(),
-              update));
+              modUpdate));
     }
   }
 
-  private String resolveSha1(
-      ServerProfile profile,
-      ServerFileSystem fileSystem,
-      FileEntry entry,
-      Optional<ModHashCacheStore.CachedMetadata> cachedMetadata)
+  @Cacheable(
+      value = "mod-hashes",
+      key =
+          "#profile.id + ':' + #entry.path() + ':' + #entry.size()"
+              + " + ':' + #entry.modifiedAt().toEpochMilli()")
+  public String resolveSha1(ServerProfile profile, ServerFileSystem fileSystem, FileEntry entry)
       throws IOException {
-    if (cachedMetadata.isPresent()) {
-      log.info("Using cached hash for mod {}", entry.path());
-      return cachedMetadata.get().sha1();
-    }
     log.info("Hashing mod {}", entry.path());
     byte[] bytes = fileSystem.readBytes(entry.path());
     String sha1 = digest("SHA-1", bytes);
-    modHashCacheStore.put(profile, entry, sha1);
     log.info("Finished hashing mod {}", entry.path());
     return sha1;
-  }
-
-  private void cacheWrittenFile(
-      ServerProfile profile, ServerFileSystem fileSystem, String relativePath, String sha1)
-      throws IOException {
-    cacheWrittenFile(profile, fileSystem, relativePath, sha1, null);
-  }
-
-  private void cacheWrittenFile(
-      ServerProfile profile,
-      ServerFileSystem fileSystem,
-      String relativePath,
-      String sha1,
-      String projectName)
-      throws IOException {
-    findEntry(fileSystem, relativePath)
-        .ifPresent(entry -> modHashCacheStore.put(profile, entry, sha1, projectName));
-  }
-
-  private static ModUpdate projectMetadata(String projectName) {
-    return new ModUpdate(
-        null, projectName, null, null, null, null, null, null, null, null, null, 0L);
-  }
-
-  private Optional<FileEntry> findEntry(ServerFileSystem fileSystem, String relativePath)
-      throws IOException {
-    String folderPath = parentPath(relativePath);
-    return fileSystem.list(folderPath).stream()
-        .filter(entry -> relativePath.equals(entry.path()))
-        .findFirst();
   }
 
   private static String joinPath(String folderPath, String fileName) {
@@ -278,14 +198,6 @@ public class ModService {
       return fileName;
     }
     return folderPath.endsWith("/") ? folderPath + fileName : folderPath + "/" + fileName;
-  }
-
-  private static String parentPath(String relativePath) {
-    int slash = relativePath.lastIndexOf('/');
-    if (slash < 0) {
-      return "";
-    }
-    return relativePath.substring(0, slash);
   }
 
   private static String digest(String algorithm, byte[] bytes) throws IOException {

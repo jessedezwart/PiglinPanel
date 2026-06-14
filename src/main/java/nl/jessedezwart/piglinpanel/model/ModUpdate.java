@@ -1,5 +1,6 @@
 package nl.jessedezwart.piglinpanel.model;
 
+import java.io.Serializable;
 import java.net.URI;
 import java.time.Instant;
 
@@ -15,7 +16,9 @@ public record ModUpdate(
     String iconUrl,
     String clientSide,
     String serverSide,
-    long downloads) {
+    long downloads)
+    implements Serializable {
+
   public boolean available() {
     return latestVersionId != null
         && !latestVersionId.equals(currentVersionId)

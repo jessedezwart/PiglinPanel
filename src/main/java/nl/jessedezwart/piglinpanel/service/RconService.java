@@ -24,7 +24,8 @@ public class RconService {
         log.info("RCON command completed for {}", profile.getName());
         return response;
       } catch (EOFException e) {
-        log.warn("RCON connection closed by server for {} (attempt {})", profile.getName(), attempt, e);
+        log.warn(
+            "RCON connection closed by server for {} (attempt {})", profile.getName(), attempt, e);
         if (attempt == 2) {
           throw e;
         }

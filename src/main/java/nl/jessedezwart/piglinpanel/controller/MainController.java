@@ -116,9 +116,7 @@ public class MainController extends BaseController {
   @PostMapping("/servers/{id}/delete")
   public ResponseEntity<Void> deleteServer(@PathVariable String id) {
     registryService.delete(id);
-    return ResponseEntity.ok()
-        .header("HX-Redirect", "/")
-        .build();
+    return ResponseEntity.ok().header("HX-Redirect", "/").build();
   }
 
   static String formatModFolders(List<ModFolder> folders) {

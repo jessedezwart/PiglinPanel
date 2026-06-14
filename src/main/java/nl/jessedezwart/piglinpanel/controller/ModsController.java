@@ -27,15 +27,14 @@ public class ModsController extends BaseController {
 
   @GetMapping("/mods")
   public String mods(
-      @RequestParam(required = false) String serverId,
-      Model model,
-      HttpServletRequest request)
+      @RequestParam(required = false) String serverId, Model model, HttpServletRequest request)
       throws IOException {
     populateLayout(model, serverId, "mods");
     ServerProfile profile = resolveServer(serverId);
     if (profile != null) {
       model.addAttribute("mods", modService.scan(profile, false));
     }
+    model.addAttribute("updatesLoaded", false);
     model.addAttribute("contentFragment", "fragments/mods :: content");
     if (isHtmxRequest(request)) {
       return "fragments/mods :: content";
@@ -44,13 +43,14 @@ public class ModsController extends BaseController {
   }
 
   @PostMapping("/mods/check-updates")
-  public String checkUpdates(
-      @RequestParam(required = false) String serverId, Model model) throws IOException {
+  public String checkUpdates(@RequestParam(required = false) String serverId, Model model)
+      throws IOException {
     populateLayout(model, serverId, "mods");
     ServerProfile profile = resolveServer(serverId);
     if (profile != null) {
       model.addAttribute("mods", modService.scan(profile, true));
     }
+    model.addAttribute("updatesLoaded", true);
     return "fragments/mods :: content";
   }
 
@@ -63,14 +63,17 @@ public class ModsController extends BaseController {
     populateLayout(model, serverId, "mods");
     ServerProfile profile = resolveServer(serverId);
     if (profile != null && modPaths != null) {
-      List<ModFile> allMods = modService.scanForUpdate(profile);
+      List<ModFile> allMods = modService.scan(profile, true);
       for (ModFile mod : allMods) {
-        if (modPaths.contains(mod.relativePath()) && mod.update() != null && mod.update().available()) {
+        if (modPaths.contains(mod.relativePath())
+            && mod.update() != null
+            && mod.update().available()) {
           modService.applyUpdate(profile, mod);
         }
       }
-      model.addAttribute("mods", modService.scan(profile, false));
+      model.addAttribute("mods", modService.scan(profile, true));
     }
+    model.addAttribute("updatesLoaded", true);
     return "fragments/mods :: content";
   }
 
@@ -91,6 +94,7 @@ public class ModsController extends BaseController {
       }
       model.addAttribute("mods", modService.scan(profile, false));
     }
+    model.addAttribute("updatesLoaded", false);
     return "fragments/mods :: content";
   }
 
@@ -104,15 +108,17 @@ public class ModsController extends BaseController {
     populateLayout(model, serverId, "mods");
     ServerProfile profile = resolveServer(serverId);
     if (profile != null && !file.isEmpty()) {
-      ModFolder folder = profile.getModFolders().stream()
-          .filter(f -> folderId.equals(f.getId()))
-          .findFirst()
-          .orElse(profile.getModFolders().isEmpty() ? null : profile.getModFolders().get(0));
+      ModFolder folder =
+          profile.getModFolders().stream()
+              .filter(f -> folderId.equals(f.getId()))
+              .findFirst()
+              .orElse(profile.getModFolders().isEmpty() ? null : profile.getModFolders().get(0));
       if (folder != null) {
         modService.upload(profile, folder, file.getOriginalFilename(), file.getBytes());
       }
       model.addAttribute("mods", modService.scan(profile, false));
     }
+    model.addAttribute("updatesLoaded", false);
     return "fragments/mods :: content";
   }
 }

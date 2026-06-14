@@ -12,7 +12,8 @@ public class ServerProfile {
   private AccessType accessType = AccessType.LOCAL;
   private String rootPath = "";
   private String logsPath = "logs";
-  private List<ModFolder> modFolders = new ArrayList<>(List.of(new ModFolder("mods", "mods", "mods")));
+  private List<ModFolder> modFolders =
+      new ArrayList<>(List.of(new ModFolder("mods", "mods", "mods")));
   private SshConfig ssh = new SshConfig();
   private RconConfig rcon = new RconConfig();
 

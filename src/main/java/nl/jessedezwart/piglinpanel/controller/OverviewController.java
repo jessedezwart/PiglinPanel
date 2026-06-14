@@ -16,9 +16,7 @@ public class OverviewController extends BaseController {
 
   @GetMapping("/overview")
   public String overview(
-      @RequestParam(required = false) String serverId,
-      Model model,
-      HttpServletRequest request) {
+      @RequestParam(required = false) String serverId, Model model, HttpServletRequest request) {
     populateLayout(model, serverId, "overview");
     model.addAttribute("contentFragment", "fragments/overview :: content");
     if (isHtmxRequest(request)) {

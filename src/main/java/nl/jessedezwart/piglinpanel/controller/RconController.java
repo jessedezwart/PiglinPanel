@@ -27,9 +27,7 @@ public class RconController extends BaseController {
 
   @GetMapping("/rcon")
   public String rcon(
-      @RequestParam(required = false) String serverId,
-      Model model,
-      HttpServletRequest request)
+      @RequestParam(required = false) String serverId, Model model, HttpServletRequest request)
       throws IOException {
     populateLayout(model, serverId, "rcon");
     ServerProfile profile = resolveServer(serverId);
@@ -45,9 +43,7 @@ public class RconController extends BaseController {
 
   @PostMapping("/rcon/command")
   public String executeCommand(
-      @RequestParam(required = false) String serverId,
-      @RequestParam String command,
-      Model model) {
+      @RequestParam(required = false) String serverId, @RequestParam String command, Model model) {
     ServerProfile profile = resolveServer(serverId);
     model.addAttribute("serverId", serverId);
     if (profile == null) {
@@ -64,8 +60,8 @@ public class RconController extends BaseController {
   }
 
   @GetMapping("/rcon/log")
-  public String rconLog(
-      @RequestParam(required = false) String serverId, Model model) throws IOException {
+  public String rconLog(@RequestParam(required = false) String serverId, Model model)
+      throws IOException {
     ServerProfile profile = resolveServer(serverId);
     String content = "";
     if (profile != null) {

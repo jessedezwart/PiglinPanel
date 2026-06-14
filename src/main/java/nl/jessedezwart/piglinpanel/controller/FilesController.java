@@ -67,9 +67,7 @@ public class FilesController extends BaseController {
 
   @GetMapping("/files/open")
   public String openFile(
-      @RequestParam(required = false) String serverId,
-      @RequestParam String path,
-      Model model)
+      @RequestParam(required = false) String serverId, @RequestParam String path, Model model)
       throws IOException {
     ServerProfile profile = resolveServer(serverId);
     model.addAttribute("serverId", serverId);
@@ -107,8 +105,7 @@ public class FilesController extends BaseController {
 
   @GetMapping("/files/download")
   public ResponseEntity<byte[]> downloadFile(
-      @RequestParam(required = false) String serverId,
-      @RequestParam String path)
+      @RequestParam(required = false) String serverId, @RequestParam String path)
       throws IOException {
     ServerProfile profile = resolveServer(serverId);
     if (profile == null) {
@@ -133,11 +130,23 @@ public class FilesController extends BaseController {
       return false;
     }
     String lower = path.toLowerCase();
-    return lower.endsWith(".txt") || lower.endsWith(".log") || lower.endsWith(".json")
-        || lower.endsWith(".yaml") || lower.endsWith(".yml") || lower.endsWith(".toml")
-        || lower.endsWith(".properties") || lower.endsWith(".conf") || lower.endsWith(".cfg")
-        || lower.endsWith(".xml") || lower.endsWith(".md") || lower.endsWith(".sh")
-        || lower.endsWith(".bat") || lower.endsWith(".cmd") || lower.endsWith(".ini")
-        || lower.endsWith(".env") || lower.endsWith(".java") || lower.endsWith(".py");
+    return lower.endsWith(".txt")
+        || lower.endsWith(".log")
+        || lower.endsWith(".json")
+        || lower.endsWith(".yaml")
+        || lower.endsWith(".yml")
+        || lower.endsWith(".toml")
+        || lower.endsWith(".properties")
+        || lower.endsWith(".conf")
+        || lower.endsWith(".cfg")
+        || lower.endsWith(".xml")
+        || lower.endsWith(".md")
+        || lower.endsWith(".sh")
+        || lower.endsWith(".bat")
+        || lower.endsWith(".cmd")
+        || lower.endsWith(".ini")
+        || lower.endsWith(".env")
+        || lower.endsWith(".java")
+        || lower.endsWith(".py");
   }
 }

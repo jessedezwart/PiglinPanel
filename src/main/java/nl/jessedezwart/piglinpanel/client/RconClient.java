@@ -105,6 +105,5 @@ public class RconClient implements Closeable {
     socket.close();
   }
 
-  private record Packet(int id, int type, String body) {
-  }
+  private record Packet(int id, int type, String body) {}
 }

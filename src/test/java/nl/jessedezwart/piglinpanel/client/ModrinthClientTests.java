@@ -43,10 +43,9 @@ class ModrinthClientTests {
                   "files":[{"filename":"latest.jar","url":"http://localhost:%d/downloads/latest.jar","primary":true}],
                   "date_published":"2026-06-10T12:00:00Z"
                 }
-                """.formatted(server.getAddress().getPort())));
-    server.createContext(
-        "/downloads/latest.jar",
-        exchange -> respond(exchange, 200, "jar-bytes"));
+                """
+                    .formatted(server.getAddress().getPort())));
+    server.createContext("/downloads/latest.jar", exchange -> respond(exchange, 200, "jar-bytes"));
     server.start();
     try {
       ModrinthClient client =
@@ -64,8 +63,13 @@ class ModrinthClientTests {
                   "latest",
                   "Latest",
                   Instant.parse("2026-06-10T12:00:00Z"),
-                  URI.create("http://localhost:" + server.getAddress().getPort() + "/stale/latest.jar"),
-                  "latest.jar"));
+                  URI.create(
+                      "http://localhost:" + server.getAddress().getPort() + "/stale/latest.jar"),
+                  "latest.jar",
+                  null,
+                  null,
+                  null,
+                  0L));
 
       assertThat(new String(bytes, java.nio.charset.StandardCharsets.UTF_8)).isEqualTo("jar-bytes");
       assertThat(staleDownloadCalls.get()).isEqualTo(1);
@@ -89,5 +93,4 @@ class ModrinthClientTests {
       output.write(bytes);
     }
   }
-
 }

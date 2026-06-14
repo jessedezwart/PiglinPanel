@@ -9,6 +9,15 @@
     <input type="hidden" id="mods-folder-id" name="folderId"
            th:value="${not #lists.isEmpty(profile.modFolders) ? profile.modFolders[0].id : ''}">
 
+    <div th:if="${updatesLoaded == false}"
+         hx-post="/mods/check-updates"
+         hx-include="#mods-server-id"
+         hx-target="#content"
+         hx-swap="innerHTML"
+         hx-trigger="load"
+         hx-indicator="#mods-spinner"
+         style="display:none"></div>
+
     <div class="toolbar">
       <wa-button size="small" variant="primary"
                  hx-post="/mods/check-updates"

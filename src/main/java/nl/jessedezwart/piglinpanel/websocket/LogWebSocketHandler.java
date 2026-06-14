@@ -45,7 +45,8 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
   }
 
   @Override
-  protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
+  protected void handleTextMessage(WebSocketSession session, TextMessage message)
+      throws IOException {
     TailingSession ts = sessions.get(session.getId());
     if (ts == null) {
       return;
@@ -137,8 +138,7 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
               StringBuilder sb = new StringBuilder();
               for (int i = lastLineCount; i < newLines.length; i++) {
                 String line = newLines[i];
-                if (filter.isBlank()
-                    || line.toLowerCase().contains(filter.toLowerCase())) {
+                if (filter.isBlank() || line.toLowerCase().contains(filter.toLowerCase())) {
                   sb.append(line).append('\n');
                 }
               }
