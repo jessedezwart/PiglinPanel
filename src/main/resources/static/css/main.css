@@ -133,9 +133,13 @@ td { padding: 7px 12px; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
 
 /* Split pane */
-.split { display: flex; height: 100%; overflow: hidden; }
-.split-left { width: 240px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); }
-.split-right { flex: 1; overflow: auto; padding-left: 16px; display: flex; flex-direction: column; }
+.split { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.split-left { width: 320px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border); }
+.split-right { flex: 1; overflow: hidden; padding-left: 16px; display: flex; flex-direction: column; }
+
+/* Remove content padding when the files split is active so it fills 100% height */
+#content:has(.split) { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+#content:has(.split) > div { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
 /* Log */
 .log-filter { margin-bottom: 10px; }
@@ -153,20 +157,51 @@ td { padding: 7px 12px; }
 .log-files-list li a.active { color: var(--accent); background: var(--bg3); }
 
 /* File tree */
-.file-tree { font-size: 0.85rem; }
+.file-tree { font-size: 0.85rem; padding: 8px 4px; }
+.file-tree > ul { list-style: none; padding-left: 0; }
 .file-tree ul { list-style: none; padding-left: 14px; }
-.file-tree li { padding: 3px 0; }
-.file-entry { cursor: pointer; padding: 3px 6px; border-radius: 3px; display: flex; align-items: center; gap: 6px; }
+.file-tree li { padding: 1px 0; }
+.file-tree details > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+}
+.file-tree details > summary::-webkit-details-marker,
+.file-tree details > summary::marker { display: none; content: ''; }
+.file-tree details > summary:hover { background: var(--bg3); }
+.file-tree details > summary::before {
+  content: "▶";
+  display: inline-block;
+  font-size: 0.6em;
+  color: var(--text-dim);
+  transition: transform 0.1s;
+  width: 10px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.file-tree details[open] > summary::before { transform: rotate(90deg); }
+.file-entry { cursor: pointer; padding: 3px 6px; padding-left: 21px; border-radius: 3px; display: flex; align-items: center; gap: 6px; }
 .file-entry:hover { background: var(--bg3); }
 .file-entry.active { color: var(--accent); }
-.file-entry .icon { color: var(--text-dim); font-style: normal; }
-.editor-pane { display: flex; flex-direction: column; height: 100%; }
-.editor-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.editor-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 16px; }
+.editor-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-shrink: 0; }
 .editor-path { font-size: 0.8rem; color: var(--text-dim); flex: 1; }
 textarea.editor {
-  flex: 1; font-family: var(--mono); font-size: 0.8rem; background: var(--bg);
+  flex: 1; min-height: 0; font-family: var(--mono); font-size: 0.8rem; background: var(--bg);
   color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 10px;
-  resize: none; min-height: 400px; width: 100%;
+  resize: none; width: 100%;
+}
+.code-view {
+  flex: 1; min-height: 0; margin: 0; overflow: auto;
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.code-view code {
+  font-family: var(--mono) !important; font-size: 0.8rem; display: block; min-height: 100%;
 }
 
 /* RCON */

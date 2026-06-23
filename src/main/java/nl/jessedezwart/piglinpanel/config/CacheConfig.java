@@ -3,6 +3,7 @@ package nl.jessedezwart.piglinpanel.config;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import javax.cache.Caching;
 import org.ehcache.config.CacheConfiguration;
@@ -49,9 +50,18 @@ public class CacheConfig {
             .withExpiry(ExpiryPolicyBuilder.timeToLiveExpiration(Duration.ofHours(24)))
             .build();
 
+    CacheConfiguration<String, List> fileListingsConfig =
+        CacheConfigurationBuilder.newCacheConfigurationBuilder(
+                String.class,
+                List.class,
+                ResourcePoolsBuilder.newResourcePoolsBuilder().heap(500, EntryUnit.ENTRIES))
+            .withExpiry(ExpiryPolicyBuilder.timeToLiveExpiration(Duration.ofSeconds(30)))
+            .build();
+
     Map<String, CacheConfiguration<?, ?>> caches = new LinkedHashMap<>();
     caches.put("mod-hashes", hashConfig);
     caches.put("modrinth-projects", projectsConfig);
+    caches.put("file-listings", fileListingsConfig);
 
     DefaultConfiguration config =
         new DefaultConfiguration(

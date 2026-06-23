@@ -69,9 +69,12 @@ public class FilesController extends BaseController {
   public String openFile(
       @RequestParam(required = false) String serverId, @RequestParam String path, Model model)
       throws IOException {
-    ServerProfile profile = resolveServer(serverId);
     model.addAttribute("serverId", serverId);
     model.addAttribute("openPath", path);
+    model.addAttribute("lang", hljsLanguage(path));
+    ServerProfile profile = resolveServer(serverId);
+    boolean isNbt = FileService.isNbtExtension(path);
+    model.addAttribute("isNbt", isNbt);
     if (profile != null) {
       if (isLikelyText(path)) {
         String content = fileService.readText(profile, path);
@@ -82,6 +85,51 @@ public class FilesController extends BaseController {
       }
     }
     return "fragments/files :: editor";
+  }
+
+  private static String hljsLanguage(String path) {
+    if (path == null) {
+      return "plaintext";
+    }
+    String lower = path.toLowerCase();
+    if (lower.endsWith(".json") || lower.endsWith(".jsonc") || lower.endsWith(".nbt")
+        || lower.endsWith(".dat") || lower.endsWith(".dat_old")) {
+      return "json";
+    }
+    if (lower.endsWith(".yaml") || lower.endsWith(".yml")) {
+      return "yaml";
+    }
+    if (lower.endsWith(".toml")) {
+      return "toml";
+    }
+    if (lower.endsWith(".sh") || lower.endsWith(".bash")) {
+      return "bash";
+    }
+    if (lower.endsWith(".bat") || lower.endsWith(".cmd")) {
+      return "dos";
+    }
+    if (lower.endsWith(".ps1")) {
+      return "powershell";
+    }
+    if (lower.endsWith(".xml")) {
+      return "xml";
+    }
+    if (lower.endsWith(".java")) {
+      return "java";
+    }
+    if (lower.endsWith(".py")) {
+      return "python";
+    }
+    if (lower.endsWith(".md")) {
+      return "markdown";
+    }
+    if (lower.endsWith(".properties")
+        || lower.endsWith(".ini")
+        || lower.endsWith(".conf")
+        || lower.endsWith(".cfg")) {
+      return "ini";
+    }
+    return "plaintext";
   }
 
   @PostMapping("/files/save")
@@ -98,6 +146,7 @@ public class FilesController extends BaseController {
     }
     model.addAttribute("serverId", serverId);
     model.addAttribute("openPath", path);
+    model.addAttribute("lang", hljsLanguage(path));
     model.addAttribute("isBinary", false);
     model.addAttribute("saved", true);
     return "fragments/files :: editor";
@@ -147,6 +196,10 @@ public class FilesController extends BaseController {
         || lower.endsWith(".ini")
         || lower.endsWith(".env")
         || lower.endsWith(".java")
-        || lower.endsWith(".py");
+        || lower.endsWith(".py")
+        || lower.endsWith(".ps1")
+        || lower.endsWith(".nbt")
+        || lower.endsWith(".dat")
+        || lower.endsWith(".dat_old");
   }
 }
