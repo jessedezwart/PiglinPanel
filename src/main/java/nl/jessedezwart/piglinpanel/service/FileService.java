@@ -47,7 +47,7 @@ public class FileService {
       return false;
     }
     String lower = path.toLowerCase();
-    return lower.endsWith(".nbt") || lower.endsWith(".dat") || lower.endsWith(".dat_old");
+    return lower.endsWith(".nbt") || lower.endsWith(".dat") || lower.endsWith(".dat_old") || lower.endsWith(".mca");
   }
 
   private String readNbt(byte[] bytes) throws IOException {
