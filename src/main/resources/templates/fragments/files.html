@@ -83,12 +83,17 @@
       Saved.
     </wa-alert>
 
+    <wa-alert th:if="${error}" variant="danger" open style="margin-bottom: 8px; flex-shrink: 0;">
+      <wa-icon slot="icon" name="triangle-exclamation"></wa-icon>
+      <span th:text="${error}"></span>
+    </wa-alert>
+
     <div th:if="${fileContent != null}" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
       <!-- View mode -->
       <div id="file-view" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
         <div class="editor-toolbar">
           <span class="editor-path" th:text="${openPath}"></span>
-          <wa-button th:unless="${isNbt}" size="small" onclick="enableFileEdit()">
+          <wa-button size="small" onclick="enableFileEdit()">
             <wa-icon slot="prefix" name="pen"></wa-icon>
             Edit
           </wa-button>
@@ -102,7 +107,7 @@
       </div>
 
       <!-- Edit mode (hidden by default, not shown for NBT files) -->
-      <form th:unless="${isNbt}" id="file-edit"
+      <form id="file-edit"
             style="display: none; flex-direction: column; flex: 1; min-height: 0;"
             hx-post="/files/save"
             hx-target="#editor-pane"
@@ -132,11 +137,14 @@
     <div th:if="${fileContent == null}" class="empty-state">Select a file to view or edit.</div>
   </div>
 
-  <script>
+  <script th:inline="javascript">
     (function () {
       var code = document.querySelector('#editor-pane code');
       if (code && typeof hljs !== 'undefined') {
         hljs.highlightElement(code);
+      }
+      if (/*[[${error}]]*/ false) {
+        enableFileEdit();
       }
     })();
 

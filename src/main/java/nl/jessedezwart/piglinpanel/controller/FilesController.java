@@ -140,15 +140,25 @@ public class FilesController extends BaseController {
       Model model)
       throws IOException {
     ServerProfile profile = resolveServer(serverId);
+    boolean isNbt = FileService.isNbtExtension(path);
     if (profile != null) {
-      fileService.saveText(profile, path, content);
+      try {
+        if (isNbt) {
+          fileService.saveNbt(profile, path, content);
+        } else {
+          fileService.saveText(profile, path, content);
+        }
+        model.addAttribute("saved", true);
+      } catch (Exception e) {
+        model.addAttribute("error", "Could not save: " + e.getMessage());
+      }
       model.addAttribute("fileContent", content);
     }
     model.addAttribute("serverId", serverId);
     model.addAttribute("openPath", path);
     model.addAttribute("lang", hljsLanguage(path));
     model.addAttribute("isBinary", false);
-    model.addAttribute("saved", true);
+    model.addAttribute("isNbt", isNbt);
     return "fragments/files :: editor";
   }
 
