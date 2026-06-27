@@ -14,6 +14,7 @@
                      hx-target="find ul"
                      hx-swap="innerHTML">
               <summary>
+                <wa-icon name="folder"></wa-icon>
                 <span th:text="${entry.name()}"></span>
               </summary>
               <ul></ul>
@@ -25,6 +26,7 @@
                  hx-target="#editor-pane"
                  hx-swap="outerHTML"
                  hx-trigger="click">
+              <wa-icon name="file"></wa-icon>
               <span th:text="${entry.name()}"></span>
             </div>
           </li>
@@ -47,6 +49,7 @@
                hx-target="find ul"
                hx-swap="innerHTML">
         <summary>
+          <wa-icon name="folder"></wa-icon>
           <span th:text="${entry.name()}"></span>
         </summary>
         <ul></ul>
@@ -58,6 +61,7 @@
            hx-target="#editor-pane"
            hx-swap="outerHTML"
            hx-trigger="click">
+        <wa-icon name="file"></wa-icon>
         <span th:text="${entry.name()}"></span>
       </div>
     </li>
@@ -70,7 +74,7 @@
       <span class="editor-path" th:text="${openPath}"></span>
       <wa-button size="small"
                  th:attr="href='/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
-        <wa-icon slot="prefix" name="download"></wa-icon>
+        <wa-icon slot="start" name="download"></wa-icon>
         Download
       </wa-button>
     </div>
@@ -94,12 +98,12 @@
         <div class="editor-toolbar">
           <span class="editor-path" th:text="${openPath}"></span>
           <wa-button size="small" onclick="enableFileEdit()">
-            <wa-icon slot="prefix" name="pen"></wa-icon>
+            <wa-icon slot="start" name="pen"></wa-icon>
             Edit
           </wa-button>
           <wa-button size="small"
                      th:attr="href='/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
-            <wa-icon slot="prefix" name="download"></wa-icon>
+            <wa-icon slot="start" name="download"></wa-icon>
             Download
           </wa-button>
         </div>
@@ -117,16 +121,16 @@
         <div class="editor-toolbar">
           <span class="editor-path" th:text="${openPath}"></span>
           <wa-button size="small" variant="primary" type="submit">
-            <wa-icon slot="prefix" name="floppy-disk"></wa-icon>
+            <wa-icon slot="start" name="floppy-disk"></wa-icon>
             Save
           </wa-button>
           <wa-button size="small" type="button" onclick="disableFileEdit()">
-            <wa-icon slot="prefix" name="xmark"></wa-icon>
+            <wa-icon slot="start" name="xmark"></wa-icon>
             Cancel
           </wa-button>
           <wa-button size="small"
                      th:attr="href='/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
-            <wa-icon slot="prefix" name="download"></wa-icon>
+            <wa-icon slot="start" name="download"></wa-icon>
             Download
           </wa-button>
         </div>

@@ -255,11 +255,19 @@ class ModServiceTests {
 
   @Test
   void groupsVersionsByProjectWithActiveSurfaced() {
-    ModService service = newService(mock(ServerConnectionService.class), mock(ModrinthClient.class));
+    ModService service =
+        newService(mock(ServerConnectionService.class), mock(ModrinthClient.class));
     ModUpdate update = projectUpdate("create");
     ModFile active =
         new ModFile(
-            "mods", "mods", "mods", "mods/create-5.1.jar", "create-5.1.jar", 20, false, "h1",
+            "mods",
+            "mods",
+            "mods",
+            "mods/create-5.1.jar",
+            "create-5.1.jar",
+            20,
+            false,
+            "h1",
             update);
     ModFile archived =
         new ModFile(

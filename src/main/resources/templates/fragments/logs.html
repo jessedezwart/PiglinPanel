@@ -14,14 +14,16 @@
              hx-swap="outerHTML"
              data-ws-latest
              th:classappend="${currentLogPath == 'latest.log'} ? ' active'">
-            latest.log
+            <wa-icon name="file-waveform"></wa-icon>
+            <span>latest.log</span>
           </a>
         </li>
         <li th:each="f : ${logFiles}" th:if="${f.name != 'latest.log'}">
           <a th:hx-get="'/logs/file?serverId=' + ${serverId} + '&amp;path=' + ${f.name}"
              hx-target="#log-content"
-             hx-swap="outerHTML"
-             th:text="${f.name}">
+             hx-swap="outerHTML">
+            <wa-icon name="file-lines"></wa-icon>
+            <span th:text="${f.name}"></span>
           </a>
         </li>
       </ul>
@@ -121,15 +123,20 @@
       } else {
         const el = document.getElementById('log-content');
         if (!el) return;
-        el.setAttribute('hx-vals', JSON.stringify({serverId: _logServerId, filter: value}));
+        el.setAttribute('hx-vals', JSON.stringify({filter: value}));
         htmx.trigger(el, 'updateFilter');
       }
     }
 
-    document.getElementById('log-filter-input')?.addEventListener('wa-input', function(e) {
-      updateLogFilter(e.target.value);
+    const _logFilterInput = document.getElementById('log-filter-input');
+    // Web Awesome inputs emit a native `input` event; also handle `wa-input`/`wa-clear` for safety.
+    _logFilterInput?.addEventListener('input', function(e) {
+      updateLogFilter(e.target.value || '');
     });
-    document.getElementById('log-filter-input')?.addEventListener('wa-clear', function() {
+    _logFilterInput?.addEventListener('wa-input', function(e) {
+      updateLogFilter(e.target.value || '');
+    });
+    _logFilterInput?.addEventListener('wa-clear', function() {
       updateLogFilter('');
     });
 
@@ -146,6 +153,9 @@
       } else {
         _viewingLatest = false;
         disconnectLogWs();
+        // Highlight the selected older log file in the sidebar.
+        document.querySelectorAll('.log-files-list a').forEach(a => a.classList.remove('active'));
+        e.detail.elt.classList.add('active');
       }
     });
 
@@ -175,7 +185,9 @@
 <pre th:fragment="log-content"
      id="log-content"
      class="language-log"
-     th:hx-get="'/logs/content?serverId=' + ${serverId}"
+     th:hx-get="${isLatest}
+       ? '/logs/content?serverId=' + ${serverId}
+       : '/logs/file?serverId=' + ${serverId} + '&amp;path=' + ${#uris.escapeQueryParam(logPath)}"
      th:hx-vals='|{"filter": "${filter}"}|'
      hx-trigger="updateFilter"
      hx-swap="outerHTML"

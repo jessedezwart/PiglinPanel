@@ -96,7 +96,7 @@
                hx-get="/servers/new-form"
                hx-target="#modal"
                hx-swap="innerHTML">
-      <wa-icon slot="prefix" name="plus"></wa-icon>
+      <wa-icon slot="start" name="plus"></wa-icon>
       Add server
     </wa-button>
     <wa-button size="small" variant="neutral"
@@ -105,7 +105,7 @@
                hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'
                hx-target="#modal"
                hx-swap="innerHTML">
-      <wa-icon slot="prefix" name="pen"></wa-icon>
+      <wa-icon slot="start" name="pen"></wa-icon>
       Edit
     </wa-button>
     <wa-button size="small" variant="danger"
@@ -113,7 +113,7 @@
                hx-post="/servers/__${profile.id}__/delete"
                hx-confirm="Delete this server?"
                hx-vals='js:{"serverId": document.getElementById("server-select") ? document.getElementById("server-select").value : ""}'>
-      <wa-icon slot="prefix" name="trash"></wa-icon>
+      <wa-icon slot="start" name="trash"></wa-icon>
       Delete
     </wa-button>
   </div>
@@ -123,20 +123,25 @@
   <nav class="sidebar">
     <a class="nav-link" th:classappend="${currentView == 'overview'} ? ' active'"
        hx-get="/overview" hx-target="#content" hx-push-url="true"
-       hx-vals='js:{"serverId": currentServerId()}'>Overview</a>
+       hx-vals='js:{"serverId": currentServerId()}'>
+      <wa-icon name="gauge-high"></wa-icon><span>Overview</span></a>
     <a class="nav-link" th:classappend="${currentView == 'mods'} ? ' active'"
        hx-get="/mods" hx-target="#content" hx-push-url="true"
-       hx-vals='js:{"serverId": currentServerId()}'>Mods</a>
+       hx-vals='js:{"serverId": currentServerId()}'>
+      <wa-icon name="puzzle-piece"></wa-icon><span>Mods</span></a>
     <a class="nav-link" th:classappend="${currentView == 'logs'} ? ' active'"
        hx-get="/logs" hx-target="#content" hx-push-url="true"
-       hx-vals='js:{"serverId": currentServerId()}'>Logs</a>
+       hx-vals='js:{"serverId": currentServerId()}'>
+      <wa-icon name="file-lines"></wa-icon><span>Logs</span></a>
     <a class="nav-link" th:classappend="${currentView == 'files'} ? ' active'"
        hx-get="/files" hx-target="#content" hx-push-url="true"
-       hx-vals='js:{"serverId": currentServerId()}'>Files</a>
+       hx-vals='js:{"serverId": currentServerId()}'>
+      <wa-icon name="folder-tree"></wa-icon><span>Files</span></a>
     <a class="nav-link" th:if="${profile != null and profile.rcon.enabled}"
        th:classappend="${currentView == 'rcon'} ? ' active'"
        hx-get="/rcon" hx-target="#content" hx-push-url="true"
-       hx-vals='js:{"serverId": currentServerId()}'>RCON</a>
+       hx-vals='js:{"serverId": currentServerId()}'>
+      <wa-icon name="terminal"></wa-icon><span>RCON</span></a>
   </nav>
 
   <main id="content">

@@ -70,7 +70,9 @@ body {
   padding: 12px 0;
 }
 .nav-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 10px 16px;
   color: var(--text-dim);
   text-decoration: none;
@@ -78,6 +80,8 @@ body {
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
+wa-icon { margin-inline: 2px; }
+.nav-link wa-icon { width: 16px; flex-shrink: 0; margin-inline: 0; }
 .nav-link:hover { background: var(--bg3); color: var(--text); }
 .nav-link.active { background: var(--bg3); color: var(--accent); font-weight: 600; }
 
@@ -122,6 +126,8 @@ td { padding: 7px 12px; }
 /* Overview */
 .overview-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.875rem; }
 .overview-key { color: var(--text-dim); }
+.overview-url { font-family: var(--mono); font-size: 0.82rem; user-select: all; word-break: break-all; color: var(--accent); text-decoration: none; }
+.overview-url:hover { text-decoration: underline; }
 .overview-name { display: inline-flex; align-items: center; gap: 8px; }
 .server-status-dot {
   width: 10px;
@@ -161,9 +167,11 @@ td { padding: 7px 12px; }
 }
 .log-files-list { list-style: none; }
 .log-files-list li a {
-  display: block; padding: 6px 12px; color: var(--text-dim); font-size: 0.82rem;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; color: var(--text-dim); font-size: 0.82rem;
   cursor: pointer; text-decoration: none; word-break: break-all;
 }
+.log-files-list li a wa-icon { flex-shrink: 0; }
 .log-files-list li a:hover { background: var(--bg3); color: var(--text); }
 .log-files-list li a.active { color: var(--accent); background: var(--bg3); }
 

@@ -37,7 +37,9 @@ public class ModService {
   private final ModrinthClient modrinthClient;
 
   @Autowired @Lazy ModService self;
-  @Autowired(required = false) CacheManager cacheManager;
+
+  @Autowired(required = false)
+  CacheManager cacheManager;
 
   /** Reports scan progress so callers (e.g. the SSE endpoint) can show a live indicator. */
   @FunctionalInterface
@@ -154,10 +156,7 @@ public class ModService {
   public void activate(ServerProfile profile, String archivedPath, String currentActivePath)
       throws IOException {
     log.info(
-        "Activating {} (disabling {}) for {}",
-        archivedPath,
-        currentActivePath,
-        profile.getName());
+        "Activating {} (disabling {}) for {}", archivedPath, currentActivePath, profile.getName());
     if (currentActivePath != null && !currentActivePath.isBlank()) {
       disablePath(profile, currentActivePath);
     }
@@ -282,8 +281,7 @@ public class ModService {
     Map<String, ModUpdate> resolved = new LinkedHashMap<>();
     List<String> missing = new ArrayList<>();
     for (String hash : allHashes) {
-      ModUpdate cached =
-          (!forceRefresh && cache != null) ? cache.get(hash, ModUpdate.class) : null;
+      ModUpdate cached = (!forceRefresh && cache != null) ? cache.get(hash, ModUpdate.class) : null;
       if (cached != null) {
         resolved.put(hash, cached);
       } else {

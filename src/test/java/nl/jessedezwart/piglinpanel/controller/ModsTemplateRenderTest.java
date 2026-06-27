@@ -49,7 +49,14 @@ class ModsTemplateRenderTest {
             1234L);
     ModFile active =
         new ModFile(
-            "mods", "mods", "mods", "mods/create-5.1.jar", "create-5.1.jar", 20, false, "h1",
+            "mods",
+            "mods",
+            "mods",
+            "mods/create-5.1.jar",
+            "create-5.1.jar",
+            20,
+            false,
+            "h1",
             update);
     ModFile archived =
         new ModFile(

@@ -38,6 +38,7 @@ public class LogsController extends BaseController {
       String content = logService.latestLog(profile);
       model.addAttribute("logContent", applyFilter(content, filter));
       model.addAttribute("currentLogPath", "latest.log");
+      model.addAttribute("logPath", "latest.log");
       model.addAttribute("isLatest", true);
     } else {
       model.addAttribute("isLatest", false);
@@ -65,6 +66,7 @@ public class LogsController extends BaseController {
     model.addAttribute("serverId", serverId);
     model.addAttribute("filter", filter);
     model.addAttribute("isLatest", true);
+    model.addAttribute("logPath", "latest.log");
     return "fragments/logs :: log-content";
   }
 
@@ -84,6 +86,7 @@ public class LogsController extends BaseController {
     model.addAttribute("serverId", serverId);
     model.addAttribute("filter", filter);
     model.addAttribute("isLatest", false);
+    model.addAttribute("logPath", path);
     return "fragments/logs :: log-content";
   }
 

@@ -23,12 +23,12 @@
                  hx-include="#mods-server-id"
                  hx-target="#content"
                  hx-swap="innerHTML">
-        <wa-icon slot="prefix" name="arrows-rotate"></wa-icon>
+        <wa-icon slot="start" name="arrows-rotate"></wa-icon>
         Check updates
       </wa-button>
 
       <wa-button size="small" id="upload-mod-btn">
-        <wa-icon slot="prefix" name="upload"></wa-icon>
+        <wa-icon slot="start" name="upload"></wa-icon>
         Upload mod
       </wa-button>
       <input id="mod-upload-input" type="file" accept=".jar" style="display:none"
@@ -46,7 +46,7 @@
                  hx-confirm="Delete selected mods?"
                  hx-target="#content"
                  hx-swap="innerHTML">
-        <wa-icon slot="prefix" name="trash"></wa-icon>
+        <wa-icon slot="start" name="trash"></wa-icon>
         Delete selected
       </wa-button>
       <wa-button th:if="${groups != null and not #lists.isEmpty(groups)}"
@@ -56,7 +56,7 @@
                  hx-confirm="Update selected mods?"
                  hx-target="#content"
                  hx-swap="innerHTML">
-        <wa-icon slot="prefix" name="cloud-arrow-down"></wa-icon>
+        <wa-icon slot="start" name="cloud-arrow-down"></wa-icon>
         Update selected
       </wa-button>
     </div>
@@ -177,7 +177,7 @@
                            th:attr="hx-post=|/mods/activate?serverId=${#uris.escapeQueryParam(serverId)}&amp;modPath=${#uris.escapeQueryParam(arch.relativePath)}&amp;activePath=${group.active != null ? #uris.escapeQueryParam(group.active.relativePath) : ''}|"
                            hx-target="#content"
                            hx-swap="innerHTML">
-                  <wa-icon slot="prefix" name="rotate-left"></wa-icon>
+                  <wa-icon slot="start" name="rotate-left"></wa-icon>
                   Activate
                 </wa-button>
               </td>

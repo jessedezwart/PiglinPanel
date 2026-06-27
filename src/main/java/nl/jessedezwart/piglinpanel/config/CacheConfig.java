@@ -16,6 +16,7 @@ import org.ehcache.config.units.MemoryUnit;
 import org.ehcache.core.config.DefaultConfiguration;
 import org.ehcache.impl.config.persistence.DefaultPersistenceConfiguration;
 import org.ehcache.jsr107.EhcacheCachingProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.jcache.JCacheCacheManager;
 import org.springframework.context.annotation.Bean;
@@ -24,6 +25,9 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableCaching
 public class CacheConfig {
+
+  @Value("${piglinpanel.cache.dir:}")
+  private String configuredCacheDir;
 
   @SuppressWarnings("rawtypes")
   @Bean(destroyMethod = "close")
@@ -89,7 +93,10 @@ public class CacheConfig {
     return new JCacheCacheManager(ehcacheJcacheManager);
   }
 
-  private static Path resolveCacheDir() {
+  private Path resolveCacheDir() {
+    if (configuredCacheDir != null && !configuredCacheDir.isBlank()) {
+      return Path.of(configuredCacheDir);
+    }
     String appData = System.getenv("APPDATA");
     if (appData != null && !appData.isBlank()) {
       return Path.of(appData, "Piglinpanel", "cache");

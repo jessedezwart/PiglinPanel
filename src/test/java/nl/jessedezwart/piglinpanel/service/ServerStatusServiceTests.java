@@ -12,7 +12,7 @@ class ServerStatusServiceTests {
     ServerProfile profile = new ServerProfile();
     profile.setAccessType(AccessType.SSH);
     profile.getSsh().setHost("mc.example.test");
-    ServerStatusService service = new TestServerStatusService(true, false);
+    ServerStatusService service = new TestServerStatusService(true);
 
     ServerStatusService.ServerStatus status = service.statusFor(profile);
 
@@ -21,55 +21,50 @@ class ServerStatusServiceTests {
   }
 
   @Test
-  void usesRconHostForLocalServersWhenAvailable() {
+  void usesRconHostAndPortForLocalServersWhenAvailable() {
     ServerProfile profile = new ServerProfile();
     profile.getRcon().setEnabled(true);
     profile.getRcon().setHost("lan-server.test");
-    ServerStatusService service = new TestServerStatusService(false, false);
+    profile.getRcon().setPort(25575);
+    ServerStatusService service = new TestServerStatusService(true);
 
     ServerStatusService.ServerStatus status = service.statusFor(profile);
 
     assertThat(status.host()).isEqualTo("lan-server.test");
+    assertThat(status.port()).isEqualTo(25575);
   }
 
   @Test
-  void fallsBackToInetReachabilityWhenPingCommandFails() {
+  void fallsBackToDefaultMinecraftPortWhenRconDisabled() {
     ServerProfile profile = new ServerProfile();
-    ServerStatusService service = new TestServerStatusService(false, true);
-
-    ServerStatusService.ServerStatus status = service.statusFor(profile);
-
-    assertThat(status.online()).isTrue();
-  }
-
-  @Test
-  void marksServerOfflineWhenPingAndReachabilityFail() {
-    ServerProfile profile = new ServerProfile();
-    ServerStatusService service = new TestServerStatusService(false, false);
+    ServerStatusService service = new TestServerStatusService(false);
 
     ServerStatusService.ServerStatus status = service.statusFor(profile);
 
     assertThat(status.host()).isEqualTo("127.0.0.1");
+    assertThat(status.port()).isEqualTo(25565);
+  }
+
+  @Test
+  void marksServerOfflineWhenPortIsClosed() {
+    ServerProfile profile = new ServerProfile();
+    ServerStatusService service = new TestServerStatusService(false);
+
+    ServerStatusService.ServerStatus status = service.statusFor(profile);
+
     assertThat(status.online()).isFalse();
   }
 
   private static final class TestServerStatusService extends ServerStatusService {
-    private final boolean pingResult;
-    private final boolean reachabilityResult;
+    private final boolean portOpen;
 
-    private TestServerStatusService(boolean pingResult, boolean reachabilityResult) {
-      this.pingResult = pingResult;
-      this.reachabilityResult = reachabilityResult;
+    private TestServerStatusService(boolean portOpen) {
+      this.portOpen = portOpen;
     }
 
     @Override
-    boolean pingHost(String host) {
-      return pingResult;
-    }
-
-    @Override
-    boolean isReachable(String host) {
-      return reachabilityResult;
+    boolean isOnline(String host, int port) {
+      return portOpen;
     }
   }
 }

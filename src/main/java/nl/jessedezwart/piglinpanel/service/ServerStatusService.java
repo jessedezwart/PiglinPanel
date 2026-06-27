@@ -1,22 +1,27 @@
 package nl.jessedezwart.piglinpanel.service;
 
 import java.io.IOException;
-import java.net.InetAddress;
-import java.util.List;
-import java.util.Locale;
-import java.util.concurrent.TimeUnit;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import nl.jessedezwart.piglinpanel.model.AccessType;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import org.springframework.stereotype.Service;
 
+/**
+ * Determines whether a Minecraft server is actually online by opening a TCP connection to the
+ * server port. A plain ICMP ping only tells us the host machine answers, which is why the status
+ * dot used to stay green even when the Minecraft server itself was down.
+ */
 @Service
 public class ServerStatusService {
   private static final String LOCAL_HOST = "127.0.0.1";
+  private static final int DEFAULT_MINECRAFT_PORT = 25565;
   private static final int TIMEOUT_MILLIS = 1500;
 
   public ServerStatus statusFor(ServerProfile profile) {
     String host = resolveHost(profile);
-    return new ServerStatus(host, isOnline(host));
+    int port = resolvePort(profile);
+    return new ServerStatus(host, port, isOnline(host, port));
   }
 
   String resolveHost(ServerProfile profile) {
@@ -29,55 +34,28 @@ public class ServerStatusService {
     return LOCAL_HOST;
   }
 
-  boolean isOnline(String host) {
-    if (host == null || host.isBlank()) {
-      return false;
+  /**
+   * Prefers the RCON port when enabled (it is only open while the server is running), otherwise the
+   * default Minecraft game port.
+   */
+  int resolvePort(ServerProfile profile) {
+    if (profile.getRcon().isEnabled() && profile.getRcon().getPort() > 0) {
+      return profile.getRcon().getPort();
     }
-    return pingHost(host) || isReachable(host);
+    return DEFAULT_MINECRAFT_PORT;
   }
 
-  boolean pingHost(String host) {
-    Process process = null;
-    try {
-      process =
-          new ProcessBuilder(pingCommand(host))
-              .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-              .redirectError(ProcessBuilder.Redirect.DISCARD)
-              .start();
-      if (!process.waitFor(TIMEOUT_MILLIS + 500L, TimeUnit.MILLISECONDS)) {
-        process.destroyForcibly();
-        return false;
-      }
-      return process.exitValue() == 0;
-    } catch (IOException e) {
-      return false;
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      if (process != null) {
-        process.destroyForcibly();
-      }
+  boolean isOnline(String host, int port) {
+    if (host == null || host.isBlank() || port <= 0) {
       return false;
     }
-  }
-
-  boolean isReachable(String host) {
-    try {
-      return InetAddress.getByName(host).isReachable(TIMEOUT_MILLIS);
+    try (Socket socket = new Socket()) {
+      socket.connect(new InetSocketAddress(host, port), TIMEOUT_MILLIS);
+      return true;
     } catch (IOException e) {
       return false;
     }
   }
 
-  private static List<String> pingCommand(String host) {
-    if (isWindows()) {
-      return List.of("ping", "-n", "1", "-w", String.valueOf(TIMEOUT_MILLIS), host);
-    }
-    return List.of("ping", "-c", "1", "-W", "2", host);
-  }
-
-  private static boolean isWindows() {
-    return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
-  }
-
-  public record ServerStatus(String host, boolean online) {}
+  public record ServerStatus(String host, int port, boolean online) {}
 }

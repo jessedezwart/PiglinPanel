@@ -61,11 +61,11 @@
 
   <div slot="footer" style="display:flex; gap:8px; justify-content:flex-end;">
     <wa-button onclick="this.closest('wa-dialog').hide()">
-      <wa-icon slot="prefix" name="xmark"></wa-icon>
+      <wa-icon slot="start" name="xmark"></wa-icon>
       Cancel
     </wa-button>
     <wa-button variant="primary" type="submit" form="server-form">
-      <wa-icon slot="prefix" name="floppy-disk"></wa-icon>
+      <wa-icon slot="start" name="floppy-disk"></wa-icon>
       <span th:text="${isNew} ? 'Add Server' : 'Save Changes'"></span>
     </wa-button>
   </div>

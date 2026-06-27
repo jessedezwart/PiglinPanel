@@ -14,6 +14,9 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
 
   private static final Logger log = LoggerFactory.getLogger(BrowserLauncher.class);
 
+  /** JVM-wide flag (survives DevTools restarts) so the browser opens only once per process. */
+  private static final String BROWSER_OPENED_FLAG = "piglinpanel.browser.opened";
+
   private final Environment env;
 
   public BrowserLauncher(Environment env) {
@@ -25,6 +28,11 @@ public class BrowserLauncher implements ApplicationListener<ApplicationReadyEven
     String port = env.getProperty("local.server.port");
     String url = "http://localhost:" + port;
     log.info("Piglinpanel running at {}", url);
+    if (System.getProperty(BROWSER_OPENED_FLAG) != null) {
+      // Already opened earlier in this JVM (e.g. before a DevTools restart); don't reopen.
+      return;
+    }
+    System.setProperty(BROWSER_OPENED_FLAG, "true");
     try {
       if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
         Desktop.getDesktop().browse(URI.create(url));

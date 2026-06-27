@@ -14,7 +14,7 @@
         <span class="overview-name">
           <span class="server-status-dot"
                 th:classappend="${serverStatus.online} ? ' is-online' : ' is-offline'"
-                th:attr="title=${(serverStatus.online ? 'Online' : 'Offline') + ' via ping to ' + serverStatus.host},aria-label=${(serverStatus.online ? 'Online' : 'Offline') + ' via ping to ' + serverStatus.host}"></span>
+                th:attr="title=${(serverStatus.online ? 'Online' : 'Offline') + ' (TCP ' + serverStatus.host + ':' + serverStatus.port + ')'},aria-label=${(serverStatus.online ? 'Online' : 'Offline') + ' (TCP ' + serverStatus.host + ':' + serverStatus.port + ')'}"></span>
           <span th:text="${profile.name}"></span>
         </span>
         <span class="overview-key">Access Type</span>
@@ -48,6 +48,16 @@
         <span th:text="${profile.ssh.username}"></span>
         <span class="overview-key">Private Key</span>
         <span th:text="${profile.ssh.privateKeyPath.isBlank() ? '(password auth)' : profile.ssh.privateKeyPath}"></span>
+        <span class="overview-key">SSH URL</span>
+        <a class="overview-url"
+           th:with="sshUrl='ssh://' + ${profile.ssh.username} + '@' + ${profile.ssh.host} + ':' + ${profile.ssh.port}"
+           th:href="${sshUrl}"
+           th:text="${sshUrl}"></a>
+        <span class="overview-key">SCP URL</span>
+        <a class="overview-url"
+           th:with="scpUrl='scp://' + ${profile.ssh.username} + '@' + ${profile.ssh.host} + ':' + ${profile.ssh.port} + ${profile.rootPath.startsWith('/') ? profile.rootPath : '/' + profile.rootPath}"
+           th:href="${scpUrl}"
+           th:text="${scpUrl}"></a>
       </div>
     </div>
 
