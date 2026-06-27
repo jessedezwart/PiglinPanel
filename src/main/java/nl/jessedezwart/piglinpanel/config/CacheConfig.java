@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.cache.Caching;
+import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import org.ehcache.config.CacheConfiguration;
 import org.ehcache.config.builders.CacheConfigurationBuilder;
 import org.ehcache.config.builders.ExpiryPolicyBuilder;
@@ -50,6 +51,16 @@ public class CacheConfig {
             .withExpiry(ExpiryPolicyBuilder.timeToLiveExpiration(Duration.ofHours(24)))
             .build();
 
+    CacheConfiguration<String, ModUpdate> updatesConfig =
+        CacheConfigurationBuilder.newCacheConfigurationBuilder(
+                String.class,
+                ModUpdate.class,
+                ResourcePoolsBuilder.newResourcePoolsBuilder()
+                    .heap(500, EntryUnit.ENTRIES)
+                    .disk(10, MemoryUnit.MB, true))
+            .withExpiry(ExpiryPolicyBuilder.timeToLiveExpiration(Duration.ofHours(6)))
+            .build();
+
     CacheConfiguration<String, List> fileListingsConfig =
         CacheConfigurationBuilder.newCacheConfigurationBuilder(
                 String.class,
@@ -61,6 +72,7 @@ public class CacheConfig {
     Map<String, CacheConfiguration<?, ?>> caches = new LinkedHashMap<>();
     caches.put("mod-hashes", hashConfig);
     caches.put("modrinth-projects", projectsConfig);
+    caches.put("mod-updates", updatesConfig);
     caches.put("file-listings", fileListingsConfig);
 
     DefaultConfiguration config =

@@ -11,7 +11,12 @@
       <h2>General</h2>
       <div class="overview-grid">
         <span class="overview-key">Name</span>
-        <span th:text="${profile.name}"></span>
+        <span class="overview-name">
+          <span class="server-status-dot"
+                th:classappend="${serverStatus.online} ? ' is-online' : ' is-offline'"
+                th:attr="title=${(serverStatus.online ? 'Online' : 'Offline') + ' via ping to ' + serverStatus.host},aria-label=${(serverStatus.online ? 'Online' : 'Offline') + ' via ping to ' + serverStatus.host}"></span>
+          <span th:text="${profile.name}"></span>
+        </span>
         <span class="overview-key">Access Type</span>
         <span th:text="${profile.accessType}"></span>
         <span class="overview-key">Root Path</span>

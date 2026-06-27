@@ -9,27 +9,23 @@
     <input type="hidden" id="mods-folder-id" name="folderId"
            th:value="${not #lists.isEmpty(profile.modFolders) ? profile.modFolders[0].id : ''}">
 
-    <div th:if="${updatesLoaded == false}"
-         hx-post="/mods/check-updates"
-         hx-include="#mods-server-id"
-         hx-target="#content"
-         hx-swap="innerHTML"
-         hx-trigger="load"
-         hx-indicator="#mods-spinner"
-         style="display:none"></div>
+    <div th:if="${updatesLoaded == false}" id="mods-loader"
+         th:data-stream="@{/mods/check-updates/stream(serverId=${serverId}, force=${force})}"
+         style="margin-bottom: 0.75rem; display:flex; align-items:center; gap:0.6rem;">
+      <wa-spinner style="--size: 16px; --track-width: 2px;"></wa-spinner>
+      <wa-progress-bar id="mods-progress-bar" value="0" style="flex:0 0 180px;"></wa-progress-bar>
+      <span id="mods-progress-label" style="color: var(--text-dim); font-size: 0.85rem;">Checking for updates…</span>
+    </div>
 
     <div class="toolbar">
       <wa-button size="small" variant="primary"
-                 hx-post="/mods/check-updates"
+                 hx-get="/mods?force=true"
                  hx-include="#mods-server-id"
                  hx-target="#content"
-                 hx-swap="innerHTML"
-                 hx-indicator="#mods-spinner"
-                 hx-on:htmx:before-request="setModsDisabled(true)">
+                 hx-swap="innerHTML">
         <wa-icon slot="prefix" name="arrows-rotate"></wa-icon>
         Check updates
       </wa-button>
-      <wa-spinner id="mods-spinner" class="htmx-indicator" style="--size: 16px; --track-width: 2px;"></wa-spinner>
 
       <wa-button size="small" id="upload-mod-btn">
         <wa-icon slot="prefix" name="upload"></wa-icon>
@@ -43,7 +39,7 @@
              hx-swap="innerHTML"
              name="file">
 
-      <wa-button th:if="${mods != null and not #lists.isEmpty(mods)}"
+      <wa-button th:if="${groups != null and not #lists.isEmpty(groups)}"
                  id="btn-delete" size="small" variant="danger" disabled
                  hx-post="/mods/delete"
                  hx-include="#mods-form"
@@ -53,7 +49,7 @@
         <wa-icon slot="prefix" name="trash"></wa-icon>
         Delete selected
       </wa-button>
-      <wa-button th:if="${mods != null and not #lists.isEmpty(mods)}"
+      <wa-button th:if="${groups != null and not #lists.isEmpty(groups)}"
                  id="btn-update" size="small" variant="success" disabled
                  hx-post="/mods/update"
                  hx-include="#mods-form"
@@ -65,12 +61,12 @@
       </wa-button>
     </div>
 
-    <div th:if="${mods == null or #lists.isEmpty(mods)}" class="empty-state">No mods found.</div>
+    <div th:if="${groups == null or #lists.isEmpty(groups)}" class="empty-state">No mods found.</div>
 
-    <form id="mods-form" th:if="${mods != null and not #lists.isEmpty(mods)}">
+    <form id="mods-form" th:if="${groups != null and not #lists.isEmpty(groups)}">
       <input type="hidden" name="serverId" th:value="${serverId}">
 
-      <div th:with="availableUpdates=${mods.?[update != null &amp;&amp; update.available()]}"
+      <div th:with="availableUpdates=${groups.?[update != null and update.available()]}"
            th:if="${not #lists.isEmpty(availableUpdates)}"
            style="margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
         <wa-icon name="circle-exclamation" style="color: var(--wa-color-warning-600);"></wa-icon>
@@ -81,6 +77,7 @@
         <thead>
           <tr>
             <th style="width:32px"><input id="cb-select-all" type="checkbox" title="Select all"></th>
+            <th style="width:24px"></th>
             <th style="width:28px"></th>
             <th>File</th>
             <th>Folder</th>
@@ -92,62 +89,139 @@
           </tr>
         </thead>
         <tbody>
-          <tr th:each="modFile : ${mods}">
-            <td><input class="mod-checkbox" type="checkbox" name="modPaths" th:value="${modFile.relativePath}"></td>
-            <td style="padding: 0 4px;">
-              <img th:if="${modFile.update != null and modFile.update.iconUrl() != null}"
-                   th:src="${modFile.update.iconUrl()}"
-                   width="24" height="24"
-                   style="border-radius:4px;object-fit:cover;display:block;"
-                   onerror="this.style.display='none'"
-                   alt="">
-            </td>
-            <td>
-              <span th:text="${modFile.fileName}"></span>
-              <wa-badge th:if="${modFile.archived}" variant="neutral">archived</wa-badge>
-            </td>
-            <td th:text="${modFile.folderName}"></td>
-            <td th:text="${#numbers.formatDecimal(modFile.size / 1024.0, 1, 1) + ' KB'}"></td>
-            <td>
-              <wa-badge th:if="${modFile.update != null and modFile.update.clientSide() != null and modFile.update.clientSide() != 'unknown'}"
-                        th:variant="${modFile.update.clientSide() == 'required' ? 'brand' : (modFile.update.clientSide() == 'unsupported' ? 'danger' : 'neutral')}"
-                        th:text="${modFile.update.clientSide()}"></wa-badge>
-            </td>
-            <td>
-              <wa-badge th:if="${modFile.update != null and modFile.update.serverSide() != null and modFile.update.serverSide() != 'unknown'}"
-                        th:variant="${modFile.update.serverSide() == 'required' ? 'brand' : (modFile.update.serverSide() == 'unsupported' ? 'danger' : 'neutral')}"
-                        th:text="${modFile.update.serverSide()}"></wa-badge>
-            </td>
-            <td>
-              <span th:if="${modFile.update != null and modFile.update.downloads() > 0}"
-                    th:text="${modFile.update.formattedDownloads()}"
-                    style="color: var(--text-dim); font-size: 0.85rem;"></span>
-            </td>
-            <td>
-              <wa-badge th:if="${modFile.update != null and modFile.update.available()}"
-                        variant="warning"
-                        th:text="${modFile.update.latestVersionName()}"></wa-badge>
-              <span th:if="${modFile.update != null and modFile.update.projectName() != null and not modFile.update.available()}"
-                    style="color: var(--text-dim); font-size: 0.85rem;"
-                    th:text="${modFile.update.projectName()}"></span>
-              <span th:if="${modFile.update == null}"
-                    style="color: var(--text-dim);">—</span>
-            </td>
-          </tr>
+          <th:block th:each="group, gstat : ${groups}">
+            <!-- Active version row (or placeholder when every version is disabled) -->
+            <tr th:with="active=${group.active}">
+              <td>
+                <input th:if="${active != null}" class="mod-checkbox" type="checkbox"
+                       name="modPaths" th:value="${active.relativePath}">
+              </td>
+              <td style="padding:0 4px;text-align:center;">
+                <button th:if="${group.hasArchived()}" type="button" class="group-toggle"
+                        th:attr="data-group=${gstat.index}"
+                        title="Show previous versions"
+                        style="background:none;border:none;cursor:pointer;color:var(--text-dim);padding:4px;display:inline-flex;align-items:center;">
+                  <wa-icon class="chev" name="chevron-right"></wa-icon>
+                </button>
+              </td>
+              <td style="padding: 0 4px;">
+                <img th:if="${group.iconUrl != null}"
+                     th:src="${group.iconUrl}"
+                     width="24" height="24"
+                     style="border-radius:4px;object-fit:cover;display:block;"
+                     onerror="this.style.display='none'"
+                     alt="">
+              </td>
+              <td>
+                <span th:if="${group.hasArchived()}" class="group-toggle"
+                      th:attr="data-group=${gstat.index}"
+                      style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+                  <span th:text="${active != null ? active.fileName : group.displayName}"></span>
+                  <wa-badge th:if="${active == null}" variant="neutral">disabled</wa-badge>
+                  <wa-badge variant="neutral" pill
+                            th:text="${#lists.size(group.archived)} + ' version(s)'"></wa-badge>
+                </span>
+                <span th:unless="${group.hasArchived()}"
+                      style="display:inline-flex;align-items:center;gap:6px;">
+                  <span th:text="${active != null ? active.fileName : group.displayName}"></span>
+                  <wa-badge th:if="${active == null}" variant="neutral">disabled</wa-badge>
+                </span>
+              </td>
+              <td th:text="${group.folderName}"></td>
+              <td th:text="${active != null ? #numbers.formatDecimal(active.size / 1024.0, 1, 1) + ' KB' : '—'}"></td>
+              <td>
+                <wa-badge th:if="${group.update != null and group.update.clientSide() != null and group.update.clientSide() != 'unknown'}"
+                          th:variant="${group.update.clientSide() == 'required' ? 'brand' : (group.update.clientSide() == 'unsupported' ? 'danger' : 'neutral')}"
+                          th:text="${group.update.clientSide()}"></wa-badge>
+              </td>
+              <td>
+                <wa-badge th:if="${group.update != null and group.update.serverSide() != null and group.update.serverSide() != 'unknown'}"
+                          th:variant="${group.update.serverSide() == 'required' ? 'brand' : (group.update.serverSide() == 'unsupported' ? 'danger' : 'neutral')}"
+                          th:text="${group.update.serverSide()}"></wa-badge>
+              </td>
+              <td>
+                <span th:if="${group.update != null and group.update.downloads() > 0}"
+                      th:text="${group.update.formattedDownloads()}"
+                      style="color: var(--text-dim); font-size: 0.85rem;"></span>
+              </td>
+              <td>
+                <wa-badge th:if="${group.update != null and group.update.available()}"
+                          variant="warning"
+                          th:text="${group.update.latestVersionName()}"></wa-badge>
+                <span th:if="${group.update != null and group.update.projectName() != null and not group.update.available()}"
+                      style="color: var(--text-dim); font-size: 0.85rem;"
+                      th:text="${group.update.projectName()}"></span>
+                <span th:if="${active != null and group.update == null}"
+                      style="color: var(--text-dim);">—</span>
+              </td>
+            </tr>
+            <!-- Archived (disabled) versions, hidden until expanded -->
+            <tr th:each="arch : ${group.archived}"
+                class="archived-row" th:attr="data-group=${gstat.index}" style="display:none;">
+              <td>
+                <input class="mod-checkbox" type="checkbox" name="modPaths" th:value="${arch.relativePath}">
+              </td>
+              <td></td>
+              <td></td>
+              <td style="padding-left: 1.5rem;">
+                <wa-icon name="clock-rotate-left" style="color: var(--text-dim);"></wa-icon>
+                <span style="color: var(--text-dim);" th:text="${arch.fileName}"></span>
+              </td>
+              <td th:text="${arch.folderName}"></td>
+              <td th:text="${#numbers.formatDecimal(arch.size / 1024.0, 1, 1) + ' KB'}"></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td>
+                <wa-button size="small" variant="neutral"
+                           th:attr="hx-post=|/mods/activate?serverId=${#uris.escapeQueryParam(serverId)}&amp;modPath=${#uris.escapeQueryParam(arch.relativePath)}&amp;activePath=${group.active != null ? #uris.escapeQueryParam(group.active.relativePath) : ''}|"
+                           hx-target="#content"
+                           hx-swap="innerHTML">
+                  <wa-icon slot="prefix" name="rotate-left"></wa-icon>
+                  Activate
+                </wa-button>
+              </td>
+            </tr>
+          </th:block>
         </tbody>
       </table>
     </form>
 
     <script>
+      (function () {
+        const loader = document.getElementById('mods-loader');
+        if (!loader || !loader.dataset.stream) return;
+        const bar = document.getElementById('mods-progress-bar');
+        const label = document.getElementById('mods-progress-label');
+        const source = new EventSource(loader.dataset.stream);
+
+        source.addEventListener('progress', function (event) {
+          const data = JSON.parse(event.data);
+          if (data.total > 0) {
+            bar.value = Math.round((data.done / data.total) * 100);
+          }
+          if (data.phase === 'lookup') {
+            label.textContent = 'Checking updates on Modrinth…';
+          } else {
+            label.textContent = 'Reading mods ' + data.done + '/' + data.total
+              + (data.fileName ? ' — ' + data.fileName : '');
+          }
+        });
+
+        source.addEventListener('done', function (event) {
+          source.close();
+          htmx.swap('#content', event.data, { swapStyle: 'innerHTML' });
+        });
+
+        source.onerror = function () {
+          source.close();
+          if (label) label.textContent = 'Could not check for updates.';
+        };
+      })();
+
       document.getElementById('upload-mod-btn')?.addEventListener('click', () => {
         document.getElementById('mod-upload-input').click();
       });
-
-      function setModsDisabled(disabled) {
-        document.querySelectorAll('.toolbar wa-button, #mods-form input').forEach(el => {
-          el.disabled = disabled;
-        });
-      }
 
       (function () {
         const form = document.getElementById('mods-form');
@@ -175,6 +249,18 @@
         cbAll?.addEventListener('change', function () {
           form.querySelectorAll('.mod-checkbox').forEach(cb => cb.checked = cbAll.checked);
           syncButtons();
+        });
+
+        form.querySelectorAll('.group-toggle').forEach(function (toggle) {
+          toggle.addEventListener('click', function () {
+            const id = toggle.getAttribute('data-group');
+            const rows = form.querySelectorAll('.archived-row[data-group="' + id + '"]');
+            if (!rows.length) return;
+            const expanded = rows[0].style.display !== 'none';
+            rows.forEach(row => row.style.display = expanded ? 'none' : 'table-row');
+            const chev = form.querySelector('button.group-toggle[data-group="' + id + '"] .chev');
+            if (chev) chev.setAttribute('name', expanded ? 'chevron-right' : 'chevron-down');
+          });
         });
       })();
     </script>

@@ -3,7 +3,9 @@ package nl.jessedezwart.piglinpanel.service;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -15,11 +17,14 @@ import nl.jessedezwart.piglinpanel.filesystem.ServerFileSystem;
 import nl.jessedezwart.piglinpanel.model.FileEntry;
 import nl.jessedezwart.piglinpanel.model.ModFile;
 import nl.jessedezwart.piglinpanel.model.ModFolder;
+import nl.jessedezwart.piglinpanel.model.ModGroup;
 import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -27,10 +32,18 @@ import org.springframework.stereotype.Service;
 @Service
 public class ModService {
   private static final Logger log = LoggerFactory.getLogger(ModService.class);
+  private static final String DISABLED_SUFFIX = ".disabled";
   private final ServerConnectionService connectionService;
   private final ModrinthClient modrinthClient;
 
   @Autowired @Lazy ModService self;
+  @Autowired(required = false) CacheManager cacheManager;
+
+  /** Reports scan progress so callers (e.g. the SSE endpoint) can show a live indicator. */
+  @FunctionalInterface
+  public interface ProgressListener {
+    void onProgress(String phase, int done, int total, String fileName);
+  }
 
   public ModService(ServerConnectionService connectionService, ModrinthClient modrinthClient) {
     this.connectionService = connectionService;
@@ -42,6 +55,16 @@ public class ModService {
   }
 
   public List<ModFile> scan(ServerProfile profile, boolean checkUpdates, Consumer<ModFile> onMod)
+      throws IOException {
+    return scan(profile, checkUpdates, onMod, false, null);
+  }
+
+  public List<ModFile> scan(
+      ServerProfile profile,
+      boolean checkUpdates,
+      Consumer<ModFile> onMod,
+      boolean forceRefresh,
+      ProgressListener progress)
       throws IOException {
     log.info("Scanning mods for {} (checkUpdates={})", profile.getName(), checkUpdates);
     ServerFileSystem fileSystem = connectionService.fileSystem(profile);
@@ -57,6 +80,8 @@ public class ModService {
     }
     List<ModFile> mods = new ArrayList<>(candidates.size());
     List<LookupCandidate> lookupCandidates = new ArrayList<>();
+    int total = candidates.size();
+    int index = 0;
     for (Candidate candidate : candidates) {
       ModFolder folder = candidate.folder();
       FileEntry entry = candidate.entry();
@@ -68,8 +93,8 @@ public class ModService {
           log.warn("Failed to hash mod {}", entry.path(), e);
         }
       }
-      boolean archived = entry.name().endsWith(".disabled");
-      if (checkUpdates && !archived && sha1 != null) {
+      boolean archived = entry.name().endsWith(DISABLED_SUFFIX);
+      if (checkUpdates && sha1 != null) {
         lookupCandidates.add(new LookupCandidate(entry, sha1));
       }
       ModFile modFile =
@@ -84,14 +109,19 @@ public class ModService {
               sha1,
               null);
       mods.add(modFile);
+      index++;
+      if (progress != null) {
+        progress.onProgress("hashing", index, total, entry.name());
+      }
       if (onMod != null && !checkUpdates) {
         onMod.accept(modFile);
       }
     }
-    if (checkUpdates) {
-      if (!lookupCandidates.isEmpty()) {
-        applySuggestedUpdates(mods, lookupCandidates);
+    if (checkUpdates && !lookupCandidates.isEmpty()) {
+      if (progress != null) {
+        progress.onProgress("lookup", 0, lookupCandidates.size(), null);
       }
+      applySuggestedUpdates(mods, lookupCandidates, forceRefresh);
     }
     if (checkUpdates && onMod != null) {
       mods.forEach(onMod);
@@ -117,6 +147,37 @@ public class ModService {
     connectionService.fileSystem(profile).delete(modFile.relativePath());
   }
 
+  /**
+   * Activates an archived ({@code .jar.disabled}) version by enabling it, after disabling the
+   * currently active version of the same mod (if one is provided).
+   */
+  public void activate(ServerProfile profile, String archivedPath, String currentActivePath)
+      throws IOException {
+    log.info(
+        "Activating {} (disabling {}) for {}",
+        archivedPath,
+        currentActivePath,
+        profile.getName());
+    if (currentActivePath != null && !currentActivePath.isBlank()) {
+      disablePath(profile, currentActivePath);
+    }
+    enablePath(profile, archivedPath);
+  }
+
+  void disablePath(ServerProfile profile, String relativePath) throws IOException {
+    String disabled = nextArchiveName(relativePath);
+    if (!disabled.equals(relativePath)) {
+      connectionService.fileSystem(profile).move(relativePath, disabled);
+    }
+  }
+
+  void enablePath(ServerProfile profile, String relativePath) throws IOException {
+    String enabled = enableName(relativePath);
+    if (!enabled.equals(relativePath)) {
+      connectionService.fileSystem(profile).move(relativePath, enabled);
+    }
+  }
+
   public void applyUpdate(ServerProfile profile, ModFile modFile) throws IOException {
     ModUpdate update = modFile.update();
     if (update == null || !update.available()) {
@@ -136,36 +197,132 @@ public class ModService {
   }
 
   static String nextArchiveName(String relativePath) {
-    return relativePath.endsWith(".disabled") ? relativePath : relativePath + ".disabled";
+    return relativePath.endsWith(DISABLED_SUFFIX) ? relativePath : relativePath + DISABLED_SUFFIX;
   }
 
-  private void applySuggestedUpdates(List<ModFile> mods, List<LookupCandidate> lookupCandidates)
+  static String enableName(String relativePath) {
+    return relativePath.endsWith(DISABLED_SUFFIX)
+        ? relativePath.substring(0, relativePath.length() - DISABLED_SUFFIX.length())
+        : relativePath;
+  }
+
+  /**
+   * Collapses scanned files into one {@link ModGroup} per mod (keyed by Modrinth project when
+   * known, otherwise by file path), surfacing the active version with its disabled versions sorted
+   * newest first.
+   */
+  public List<ModGroup> group(List<ModFile> mods) {
+    Map<String, List<ModFile>> byKey = new LinkedHashMap<>();
+    for (ModFile mod : mods) {
+      byKey.computeIfAbsent(groupKey(mod), key -> new ArrayList<>()).add(mod);
+    }
+    List<ModGroup> groups = new ArrayList<>(byKey.size());
+    for (Map.Entry<String, List<ModFile>> entry : byKey.entrySet()) {
+      List<ModFile> files = entry.getValue();
+      ModFile active = files.stream().filter(file -> !file.archived()).findFirst().orElse(null);
+      ModFile representative = active != null ? active : files.get(0);
+      List<ModFile> archived =
+          files.stream()
+              .filter(file -> file != active)
+              .sorted(Comparator.comparing(ModService::publishedAt).reversed())
+              .toList();
+      ModUpdate update = active != null ? active.update() : null;
+      groups.add(
+          new ModGroup(
+              entry.getKey(),
+              displayName(representative),
+              iconUrl(files),
+              representative.folderName(),
+              active,
+              archived,
+              update));
+    }
+    return groups;
+  }
+
+  private static String groupKey(ModFile mod) {
+    if (mod.update() != null && mod.update().projectId() != null) {
+      return "project:" + mod.update().projectId();
+    }
+    return "file:" + mod.relativePath();
+  }
+
+  private static String displayName(ModFile mod) {
+    if (mod.update() != null
+        && mod.update().projectName() != null
+        && !mod.update().projectName().isBlank()) {
+      return mod.update().projectName();
+    }
+    return mod.fileName();
+  }
+
+  private static String iconUrl(List<ModFile> files) {
+    return files.stream()
+        .map(ModFile::update)
+        .filter(update -> update != null && update.iconUrl() != null)
+        .map(ModUpdate::iconUrl)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private static Instant publishedAt(ModFile mod) {
+    if (mod.update() != null && mod.update().lastUpdatedAt() != null) {
+      return mod.update().lastUpdatedAt();
+    }
+    return Instant.EPOCH;
+  }
+
+  private void applySuggestedUpdates(
+      List<ModFile> mods, List<LookupCandidate> lookupCandidates, boolean forceRefresh)
       throws IOException {
-    List<String> hashes = lookupCandidates.stream().map(LookupCandidate::sha1).distinct().toList();
-    Map<String, Optional<ModUpdate>> suggestedUpdates;
-    try {
-      suggestedUpdates = modrinthClient.findSuggestedUpdates(hashes);
-    } catch (IOException e) {
-      log.warn("Modrinth bulk lookup failed", e);
-      return;
+    List<String> allHashes =
+        lookupCandidates.stream().map(LookupCandidate::sha1).distinct().toList();
+
+    Cache cache = updatesCache();
+    Map<String, ModUpdate> resolved = new LinkedHashMap<>();
+    List<String> missing = new ArrayList<>();
+    for (String hash : allHashes) {
+      ModUpdate cached =
+          (!forceRefresh && cache != null) ? cache.get(hash, ModUpdate.class) : null;
+      if (cached != null) {
+        resolved.put(hash, cached);
+      } else {
+        missing.add(hash);
+      }
+    }
+
+    if (!missing.isEmpty()) {
+      Map<String, Optional<ModUpdate>> fetched;
+      try {
+        fetched = modrinthClient.findSuggestedUpdates(missing);
+      } catch (IOException e) {
+        log.warn("Modrinth bulk lookup failed", e);
+        fetched = Map.of();
+      }
+      for (String hash : missing) {
+        ModUpdate update = fetched.getOrDefault(hash, Optional.empty()).orElse(null);
+        if (update != null) {
+          resolved.put(hash, update);
+          if (cache != null) {
+            cache.put(hash, update);
+          }
+        }
+      }
     }
 
     Map<String, LookupCandidate> candidatesByPath = new LinkedHashMap<>();
     for (LookupCandidate candidate : lookupCandidates) {
       candidatesByPath.put(candidate.entry().path(), candidate);
     }
-    for (int index = 0; index < mods.size(); index++) {
-      ModFile mod = mods.get(index);
+    for (int i = 0; i < mods.size(); i++) {
+      ModFile mod = mods.get(i);
       LookupCandidate lookupCandidate = candidatesByPath.get(mod.relativePath());
       if (lookupCandidate == null) {
         continue;
       }
-      ModUpdate modUpdate =
-          suggestedUpdates
-              .getOrDefault(lookupCandidate.sha1(), Optional.empty())
-              .orElse(mod.update());
+      ModUpdate modUpdate = resolved.getOrDefault(lookupCandidate.sha1(), mod.update());
       mods.set(
-          index,
+          i,
           new ModFile(
               mod.folderId(),
               mod.folderName(),
@@ -177,6 +334,10 @@ public class ModService {
               mod.sha1(),
               modUpdate));
     }
+  }
+
+  private Cache updatesCache() {
+    return cacheManager == null ? null : cacheManager.getCache("mod-updates");
   }
 
   @Cacheable(

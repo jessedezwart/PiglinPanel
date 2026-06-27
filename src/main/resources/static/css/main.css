@@ -122,6 +122,17 @@ td { padding: 7px 12px; }
 /* Overview */
 .overview-grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.875rem; }
 .overview-key { color: var(--text-dim); }
+.overview-name { display: inline-flex; align-items: center; gap: 8px; }
+.server-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d73a49;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.12);
+  flex-shrink: 0;
+}
+.server-status-dot.is-online { background: #2da44e; }
+.server-status-dot.is-offline { background: #d73a49; }
 .overview-section { margin-bottom: 24px; }
 .overview-section h2 {
   font-size: 0.85rem; font-weight: 700; text-transform: uppercase;

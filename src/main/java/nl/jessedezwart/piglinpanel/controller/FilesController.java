@@ -92,8 +92,11 @@ public class FilesController extends BaseController {
       return "plaintext";
     }
     String lower = path.toLowerCase();
-    if (lower.endsWith(".json") || lower.endsWith(".jsonc") || lower.endsWith(".nbt")
-        || lower.endsWith(".dat") || lower.endsWith(".dat_old")) {
+    if (lower.endsWith(".json")
+        || lower.endsWith(".jsonc")
+        || lower.endsWith(".nbt")
+        || lower.endsWith(".dat")
+        || lower.endsWith(".dat_old")) {
       return "json";
     }
     if (lower.endsWith(".yaml") || lower.endsWith(".yml")) {
