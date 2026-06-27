@@ -57,7 +57,7 @@
     </li>
     <li th:unless="${entry.directory()}">
       <div class="file-entry"
-           th:hx-get="'/files/open?serverId=' + ${serverId} + '&amp;path=' + ${entry.path()}"
+           th:hx-get="'/files/open?serverId=' + ${serverId} + '&amp;path=' + ${entry.path()} + '&amp;size=' + ${entry.size()}"
            hx-target="#editor-pane"
            hx-swap="outerHTML"
            hx-trigger="click">
@@ -67,6 +67,37 @@
     </li>
   </th:block>
 </th:block>
+
+<div th:fragment="open-warning" id="editor-pane" class="editor-pane">
+  <div class="editor-toolbar">
+    <span class="editor-path" th:text="${openPath}"></span>
+  </div>
+  <div class="large-file-warning">
+    <wa-icon name="triangle-exclamation"></wa-icon>
+    <p th:if="${isNbt}">
+      This is an NBT file
+      (<span th:text="${#numbers.formatDecimal(size / 1048576.0, 1, 1)}">0.0</span> MB).
+      Parsing large NBT data can be slow and memory-intensive.
+    </p>
+    <p th:unless="${isNbt}">
+      This file is large
+      (<span th:text="${#numbers.formatDecimal(size / 1048576.0, 1, 1)}">0.0</span> MB).
+      Opening it may be slow.
+    </p>
+    <wa-button variant="primary"
+               th:hx-get="'/files/open?serverId=' + ${serverId} + '&amp;path=' + ${openPath}
+                 + '&amp;size=' + ${size} + '&amp;force=true'"
+               hx-target="#editor-pane"
+               hx-swap="outerHTML">
+      <wa-icon slot="start" name="folder-open"></wa-icon>
+      Open anyway
+    </wa-button>
+    <wa-button th:attr="href='/files/download?serverId=' + ${serverId} + '&amp;path=' + ${openPath}">
+      <wa-icon slot="start" name="download"></wa-icon>
+      Download
+    </wa-button>
+  </div>
+</div>
 
 <div th:fragment="editor" id="editor-pane" class="editor-pane">
   <div th:if="${isBinary}">

@@ -27,6 +27,24 @@
     </div>
 
     <div class="overview-section">
+      <h2>Performance</h2>
+      <div th:hx-get="'/overview/metrics?serverId=' + ${serverId}"
+           hx-trigger="load, every 3s"
+           hx-swap="innerHTML">
+        <div class="empty-state" style="padding:8px 0">Loading metrics&hellip;</div>
+      </div>
+    </div>
+
+    <div class="overview-section">
+      <h2>Specifications</h2>
+      <div th:hx-get="'/overview/specs?serverId=' + ${serverId}"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div class="empty-state" style="padding:8px 0">Loading specifications&hellip;</div>
+      </div>
+    </div>
+
+    <div class="overview-section">
       <h2>Mod Folders</h2>
       <div th:if="${#lists.isEmpty(profile.modFolders)}" class="empty-state" style="padding:8px 0">
         No mod folders configured.
@@ -70,6 +88,56 @@
         <span th:if="${profile.rcon.enabled}" th:text="${profile.rcon.host + ':' + profile.rcon.port}"></span>
       </div>
     </div>
+  </div>
+</div>
+
+<div th:fragment="metrics">
+  <div th:if="${metrics == null or not metrics.available}" class="empty-state" style="padding:8px 0">
+    <span th:text="${metrics != null and metrics.error != null
+      ? 'Metrics unavailable: ' + metrics.error
+      : 'Metrics unavailable.'}">Metrics unavailable.</span>
+  </div>
+  <div th:if="${metrics != null and metrics.available}" class="metrics-grid">
+    <div class="metric">
+      <div class="metric-label">
+        <span>CPU</span>
+        <span th:text="${metrics.cpuKnown ? metrics.cpuPercent + '%' : '—'}"></span>
+      </div>
+      <div class="metric-bar">
+        <div class="metric-bar-fill cpu"
+             th:style="'width:' + ${metrics.cpuKnown ? metrics.cpuPercent : 0} + '%'"></div>
+      </div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">
+        <span>Memory</span>
+        <span th:text="${#numbers.formatDecimal(metrics.memUsedMb / 1024.0, 1, 1)
+          + ' / ' + #numbers.formatDecimal(metrics.memTotalMb / 1024.0, 1, 1) + ' GB'}"></span>
+      </div>
+      <div class="metric-bar">
+        <div class="metric-bar-fill mem" th:style="'width:' + ${metrics.memPercent} + '%'"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div th:fragment="specs">
+  <div th:if="${specs == null or not specs.available}" class="empty-state" style="padding:8px 0">
+    <span th:text="${specs != null and specs.error != null
+      ? 'Specifications unavailable: ' + specs.error
+      : 'Specifications unavailable.'}">Specifications unavailable.</span>
+  </div>
+  <div th:if="${specs != null and specs.available}" class="overview-grid">
+    <span class="overview-key">OS</span>
+    <span th:text="${specs.os}"></span>
+    <span class="overview-key">CPU</span>
+    <span th:text="${specs.cpu}"></span>
+    <span class="overview-key">Motherboard</span>
+    <span th:text="${specs.motherboard}"></span>
+    <span class="overview-key">Memory</span>
+    <span th:text="${specs.memory}"></span>
+    <span class="overview-key">GPU</span>
+    <span th:text="${specs.gpu}"></span>
   </div>
 </div>
 </body>

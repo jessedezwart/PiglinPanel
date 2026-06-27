@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import nl.jessedezwart.piglinpanel.service.ServerRegistryService;
 import nl.jessedezwart.piglinpanel.service.ServerStatusService;
+import nl.jessedezwart.piglinpanel.service.SystemInfoService;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -12,11 +13,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 @Controller
 public class OverviewController extends BaseController {
   private final ServerStatusService serverStatusService;
+  private final SystemInfoService systemInfoService;
 
   public OverviewController(
-      ServerRegistryService registryService, ServerStatusService serverStatusService) {
+      ServerRegistryService registryService,
+      ServerStatusService serverStatusService,
+      SystemInfoService systemInfoService) {
     super(registryService);
     this.serverStatusService = serverStatusService;
+    this.systemInfoService = systemInfoService;
   }
 
   @GetMapping("/overview")
@@ -32,5 +37,25 @@ public class OverviewController extends BaseController {
       return "fragments/overview :: content";
     }
     return "layout";
+  }
+
+  @GetMapping("/overview/metrics")
+  public String metrics(@RequestParam(required = false) String serverId, Model model) {
+    ServerProfile profile = resolveServer(serverId);
+    model.addAttribute("serverId", profile != null ? profile.getId() : serverId);
+    if (profile != null) {
+      model.addAttribute("metrics", systemInfoService.metrics(profile));
+    }
+    return "fragments/overview :: metrics";
+  }
+
+  @GetMapping("/overview/specs")
+  public String specs(@RequestParam(required = false) String serverId, Model model) {
+    ServerProfile profile = resolveServer(serverId);
+    model.addAttribute("serverId", profile != null ? profile.getId() : serverId);
+    if (profile != null) {
+      model.addAttribute("specs", systemInfoService.specs(profile));
+    }
+    return "fragments/overview :: specs";
   }
 }

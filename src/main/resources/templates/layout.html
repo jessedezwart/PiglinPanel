@@ -70,16 +70,30 @@
        hx-get="/files" hx-target="#content" hx-push-url="true"
        hx-vals='js:{"serverId": currentServerId()}'>
       <wa-icon name="folder-tree"></wa-icon><span>Files</span></a>
-    <a class="nav-link" th:if="${profile != null and profile.rcon.enabled}"
+    <a class="nav-link" th:if="${profile != null}"
        th:classappend="${currentView == 'rcon'} ? ' active'"
        hx-get="/rcon" hx-target="#content" hx-push-url="true"
        hx-vals='js:{"serverId": currentServerId()}'>
-      <wa-icon name="terminal"></wa-icon><span>RCON</span></a>
+      <wa-icon name="terminal"></wa-icon><span>CLI</span></a>
   </nav>
 
   <main id="content">
     <div th:replace="~{__${contentFragment}__}"></div>
   </main>
+</div>
+
+<footer id="panel-console" class="panel-console">
+  <div class="panel-console-header" onclick="togglePanelConsole()">
+    <wa-icon name="terminal"></wa-icon>
+    <span class="panel-console-title">Panel Console</span>
+    <wa-icon class="panel-console-chevron" name="chevron-down"></wa-icon>
+  </div>
+  <pre id="panel-console-output" class="panel-console-output language-log"></pre>
+</footer>
+
+<div id="backend-toast" class="backend-toast" hidden>
+  <wa-icon name="triangle-exclamation"></wa-icon>
+  <span>Connection to backend lost. Retrying&hellip;</span>
 </div>
 
 <div id="modal"></div>
@@ -116,6 +130,88 @@
       this.innerHTML = '';
     }, { once: true });
   });
+
+  // --- Panel console (the panel's own log output) ---
+  (function () {
+    const bar = document.getElementById('panel-console');
+    const output = document.getElementById('panel-console-output');
+    if (!bar || !output) return;
+
+    // Collapsible, defaulting to expanded.
+    if (localStorage.getItem('panelConsoleOpen') === 'false') {
+      bar.classList.add('collapsed');
+    }
+
+    window.togglePanelConsole = function () {
+      const open = !bar.classList.toggle('collapsed');
+      localStorage.setItem('panelConsoleOpen', String(open));
+      if (open) scrollConsoleToBottom();
+    };
+
+    function scrollConsoleToBottom() {
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function highlightConsole() {
+      if (typeof hljs === 'undefined') return;
+      delete output.dataset.highlighted;
+      hljs.highlightElement(output);
+    }
+
+    function appendConsole(text) {
+      if (!text) return;
+      const atBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+      output.textContent += (output.textContent ? '\n' : '') + text;
+      highlightConsole();
+      if (atBottom) scrollConsoleToBottom();
+    }
+
+    let consoleWs = null;
+    function connectConsoleWs() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      consoleWs = new WebSocket(`${proto}//${location.host}/ws/console`);
+      consoleWs.onmessage = function (e) {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'init') {
+          output.textContent = msg.content || '';
+          highlightConsole();
+          scrollConsoleToBottom();
+        } else if (msg.type === 'append') {
+          appendConsole(msg.content);
+        }
+      };
+      consoleWs.onclose = function () {
+        consoleWs = null;
+        setTimeout(connectConsoleWs, 3000);
+      };
+    }
+    connectConsoleWs();
+  })();
+
+  // --- Backend connectivity heartbeat ---
+  (function () {
+    const toast = document.getElementById('backend-toast');
+    if (!toast) return;
+    let down = false;
+
+    async function ping() {
+      try {
+        const res = await fetch('/ping', { cache: 'no-store' });
+        if (!res.ok) throw new Error('bad status');
+        if (down) {
+          down = false;
+          toast.hidden = true;
+        }
+      } catch (e) {
+        if (!down) {
+          down = true;
+          toast.hidden = false;
+        }
+      }
+    }
+
+    setInterval(ping, 5000);
+  })();
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.11.1/highlight.min.js"></script>

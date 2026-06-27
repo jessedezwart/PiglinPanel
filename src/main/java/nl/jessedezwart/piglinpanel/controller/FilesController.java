@@ -65,9 +65,16 @@ public class FilesController extends BaseController {
     return "fragments/files :: file-children";
   }
 
+  private static final long LARGE_TEXT_BYTES = 1_000_000;
+  private static final long LARGE_NBT_BYTES = 512_000;
+
   @GetMapping("/files/open")
   public String openFile(
-      @RequestParam(required = false) String serverId, @RequestParam String path, Model model)
+      @RequestParam(required = false) String serverId,
+      @RequestParam String path,
+      @RequestParam(required = false, defaultValue = "0") long size,
+      @RequestParam(required = false, defaultValue = "false") boolean force,
+      Model model)
       throws IOException {
     model.addAttribute("serverId", serverId);
     model.addAttribute("openPath", path);
@@ -75,6 +82,10 @@ public class FilesController extends BaseController {
     ServerProfile profile = resolveServer(serverId);
     boolean isNbt = FileService.isNbtExtension(path);
     model.addAttribute("isNbt", isNbt);
+    if (!force && shouldWarn(path, size, isNbt)) {
+      model.addAttribute("size", size);
+      return "fragments/files :: open-warning";
+    }
     if (profile != null) {
       if (isLikelyText(path)) {
         String content = fileService.readText(profile, path);
@@ -85,6 +96,13 @@ public class FilesController extends BaseController {
       }
     }
     return "fragments/files :: editor";
+  }
+
+  private static boolean shouldWarn(String path, long size, boolean isNbt) {
+    if (isNbt) {
+      return size >= LARGE_NBT_BYTES;
+    }
+    return isLikelyText(path) && size >= LARGE_TEXT_BYTES;
   }
 
   private static String hljsLanguage(String path) {
