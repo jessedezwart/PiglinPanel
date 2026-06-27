@@ -5,8 +5,6 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import nl.jessedezwart.piglinpanel.model.ModFile;
 import nl.jessedezwart.piglinpanel.model.ModFolder;
 import nl.jessedezwart.piglinpanel.model.ModGroup;
@@ -32,7 +30,6 @@ public class ModsController extends BaseController {
 
   private final ModService modService;
   private final SpringTemplateEngine templateEngine;
-  private final ExecutorService executor = Executors.newCachedThreadPool();
 
   public ModsController(
       ServerRegistryService registryService,
@@ -73,7 +70,7 @@ public class ModsController extends BaseController {
     SseEmitter emitter = new SseEmitter(0L);
     ServerProfile profile = resolveServer(serverId);
     String resolvedServerId = profile != null ? profile.getId() : serverId;
-    executor.execute(
+    Thread.ofVirtual().start(
         () -> {
           try {
             List<ModFile> mods =

@@ -26,6 +26,16 @@ public class ServerRegistryService {
     return config.getServers();
   }
 
+  public ServerProfile resolve(String serverId) {
+    if (serverId != null && !serverId.isBlank()) {
+      return servers().stream()
+          .filter(s -> serverId.equals(s.getId()))
+          .findFirst()
+          .orElseGet(() -> selected().orElse(null));
+    }
+    return selected().orElse(null);
+  }
+
   public Optional<ServerProfile> selected() {
     String selectedId = config.getSelectedServerId();
     if (selectedId != null) {

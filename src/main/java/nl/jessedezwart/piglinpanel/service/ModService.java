@@ -1,12 +1,9 @@
 package nl.jessedezwart.piglinpanel.service;
 
 import java.io.IOException;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,11 +19,8 @@ import nl.jessedezwart.piglinpanel.model.ModUpdate;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.cache.annotation.Cacheable;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -35,11 +29,8 @@ public class ModService {
   private static final String DISABLED_SUFFIX = ".disabled";
   private final ServerConnectionService connectionService;
   private final ModrinthClient modrinthClient;
-
-  @Autowired @Lazy ModService self;
-
-  @Autowired(required = false)
-  CacheManager cacheManager;
+  private final ModHashService modHashService;
+  private final CacheManager cacheManager;
 
   /** Reports scan progress so callers (e.g. the SSE endpoint) can show a live indicator. */
   @FunctionalInterface
@@ -47,9 +38,15 @@ public class ModService {
     void onProgress(String phase, int done, int total, String fileName);
   }
 
-  public ModService(ServerConnectionService connectionService, ModrinthClient modrinthClient) {
+  public ModService(
+      ServerConnectionService connectionService,
+      ModrinthClient modrinthClient,
+      ModHashService modHashService,
+      CacheManager cacheManager) {
     this.connectionService = connectionService;
     this.modrinthClient = modrinthClient;
+    this.modHashService = modHashService;
+    this.cacheManager = cacheManager;
   }
 
   public List<ModFile> scan(ServerProfile profile, boolean checkUpdates) throws IOException {
@@ -90,7 +87,7 @@ public class ModService {
       String sha1 = null;
       if (checkUpdates) {
         try {
-          sha1 = self.resolveSha1(profile, fileSystem, entry);
+          sha1 = modHashService.resolveSha1(profile, fileSystem, entry);
         } catch (IOException e) {
           log.warn("Failed to hash mod {}", entry.path(), e);
         }
@@ -277,7 +274,7 @@ public class ModService {
     List<String> allHashes =
         lookupCandidates.stream().map(LookupCandidate::sha1).distinct().toList();
 
-    Cache cache = updatesCache();
+    Cache cache = cacheManager.getCache("mod-updates");
     Map<String, ModUpdate> resolved = new LinkedHashMap<>();
     List<String> missing = new ArrayList<>();
     for (String hash : allHashes) {
@@ -334,37 +331,10 @@ public class ModService {
     }
   }
 
-  private Cache updatesCache() {
-    return cacheManager == null ? null : cacheManager.getCache("mod-updates");
-  }
-
-  @Cacheable(
-      value = "mod-hashes",
-      key =
-          "#profile.id + ':' + #entry.path() + ':' + #entry.size()"
-              + " + ':' + #entry.modifiedAt().toEpochMilli()")
-  public String resolveSha1(ServerProfile profile, ServerFileSystem fileSystem, FileEntry entry)
-      throws IOException {
-    log.info("Hashing mod {}", entry.path());
-    byte[] bytes = fileSystem.readBytes(entry.path());
-    String sha1 = digest("SHA-1", bytes);
-    log.info("Finished hashing mod {}", entry.path());
-    return sha1;
-  }
-
   private static String joinPath(String folderPath, String fileName) {
     if (folderPath == null || folderPath.isBlank()) {
       return fileName;
     }
     return folderPath.endsWith("/") ? folderPath + fileName : folderPath + "/" + fileName;
-  }
-
-  private static String digest(String algorithm, byte[] bytes) throws IOException {
-    try {
-      MessageDigest digest = MessageDigest.getInstance(algorithm);
-      return HexFormat.of().formatHex(digest.digest(bytes));
-    } catch (NoSuchAlgorithmException e) {
-      throw new IOException("Hash algorithm is unavailable: " + algorithm, e);
-    }
   }
 }

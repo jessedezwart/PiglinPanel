@@ -97,10 +97,6 @@ public class CacheConfig {
     if (configuredCacheDir != null && !configuredCacheDir.isBlank()) {
       return Path.of(configuredCacheDir);
     }
-    String appData = System.getenv("APPDATA");
-    if (appData != null && !appData.isBlank()) {
-      return Path.of(appData, "Piglinpanel", "cache");
-    }
-    return Path.of(System.getProperty("user.home"), ".config", "piglinpanel", "cache");
+    return PiglinpanelPaths.cacheDir();
   }
 }

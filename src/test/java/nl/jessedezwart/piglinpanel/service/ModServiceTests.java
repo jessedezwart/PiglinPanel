@@ -34,9 +34,8 @@ class ModServiceTests {
   @TempDir Path tempDir;
 
   private static ModService newService(ServerConnectionService conn, ModrinthClient client) {
-    ModService service = new ModService(conn, client);
-    service.self = service;
-    return service;
+    CacheManager cache = new ConcurrentMapCacheManager("mod-hashes", "mod-updates");
+    return new ModService(conn, client, new ModHashService(), cache);
   }
 
   private static void withCachingService(
@@ -45,7 +44,7 @@ class ModServiceTests {
     MocksConfig.connectionService = conn;
     MocksConfig.modrinthClient = client;
     try (AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext()) {
-      ctx.register(CachingConfig.class, MocksConfig.class, ModService.class);
+      ctx.register(CachingConfig.class, MocksConfig.class, ModHashService.class, ModService.class);
       ctx.refresh();
       body.accept(ctx.getBean(ModService.class));
     } finally {

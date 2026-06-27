@@ -27,7 +27,7 @@ class ModHashCachingTests {
     registry.add("piglinpanel.cache.dir", () -> cacheDir.resolve("cache").toString());
   }
 
-  @Autowired ModService modService;
+  @Autowired ModHashService modHashService;
 
   @TempDir Path serverRoot;
 
@@ -43,14 +43,14 @@ class ModHashCachingTests {
     LocalServerFileSystem fileSystem = new LocalServerFileSystem(profile);
     FileEntry entry = fileSystem.list("mods").get(0);
 
-    String firstHash = modService.resolveSha1(profile, fileSystem, entry);
+    String firstHash = modHashService.resolveSha1(profile, fileSystem, entry);
 
     // Change the bytes but keep identical size + modified time so the cache key stays the same.
     Files.write(jar, "world".getBytes(StandardCharsets.UTF_8));
     Files.setLastModifiedTime(jar, modifiedTime);
     FileEntry unchangedKeyEntry = fileSystem.list("mods").get(0);
 
-    String secondHash = modService.resolveSha1(profile, fileSystem, unchangedKeyEntry);
+    String secondHash = modHashService.resolveSha1(profile, fileSystem, unchangedKeyEntry);
 
     // A cache hit returns the original hash; a cache miss would re-hash and return a different
     // value.

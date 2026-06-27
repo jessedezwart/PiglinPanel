@@ -50,10 +50,6 @@ public class AppConfigStore {
   }
 
   private static Path resolveConfigPath() {
-    String appData = System.getenv("APPDATA");
-    if (appData != null && !appData.isBlank()) {
-      return Path.of(appData, "Piglinpanel", "config.json");
-    }
-    return Path.of(System.getProperty("user.home"), ".config", "piglinpanel", "config.json");
+    return PiglinpanelPaths.configDir().resolve("config.json");
   }
 }

@@ -3,19 +3,18 @@ package nl.jessedezwart.piglinpanel.websocket;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import nl.jessedezwart.piglinpanel.model.ServerProfile;
 import nl.jessedezwart.piglinpanel.service.LogService;
 import nl.jessedezwart.piglinpanel.service.ServerRegistryService;
 import org.springframework.stereotype.Component;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import org.springframework.web.util.UriComponentsBuilder;
 
 @Component
 public class LogWebSocketHandler extends TextWebSocketHandler {
@@ -32,10 +31,11 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
 
   @Override
   public void afterConnectionEstablished(WebSocketSession session) {
-    Map<String, String> params = parseQuery(session.getUri().getQuery());
-    String serverId = params.get("serverId");
-    String filter = params.getOrDefault("filter", "");
-    ServerProfile profile = resolveProfile(serverId);
+    MultiValueMap<String, String> params =
+        UriComponentsBuilder.fromUri(session.getUri()).build().getQueryParams();
+    String serverId = params.getFirst("serverId");
+    String filter = params.getFirst("filter") != null ? params.getFirst("filter") : "";
+    ServerProfile profile = registryService.resolve(serverId);
     if (profile == null) {
       return;
     }
@@ -63,30 +63,6 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
     if (ts != null) {
       ts.stop();
     }
-  }
-
-  private ServerProfile resolveProfile(String serverId) {
-    if (serverId != null && !serverId.isBlank()) {
-      return registryService.servers().stream()
-          .filter(s -> serverId.equals(s.getId()))
-          .findFirst()
-          .orElseGet(() -> registryService.selected().orElse(null));
-    }
-    return registryService.selected().orElse(null);
-  }
-
-  private static Map<String, String> parseQuery(String query) {
-    Map<String, String> params = new HashMap<>();
-    if (query == null || query.isBlank()) {
-      return params;
-    }
-    for (String pair : query.split("&")) {
-      String[] kv = pair.split("=", 2);
-      String key = URLDecoder.decode(kv[0], StandardCharsets.UTF_8);
-      String value = kv.length == 2 ? URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "";
-      params.put(key, value);
-    }
-    return params;
   }
 
   private static class TailingSession {
@@ -118,7 +94,7 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
         String content = logService.latestLog(profile);
         String[] lines = content.split("\n", -1);
         lastLineCount = lines.length;
-        send(mapper, "init", applyFilter(content, filter));
+        send(mapper, "init", LogService.applyFilter(content, filter));
 
         while (running && wsSession.isOpen()) {
           Thread.sleep(1000);
@@ -130,7 +106,7 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
             content = logService.latestLog(profile);
             lines = content.split("\n", -1);
             lastLineCount = lines.length;
-            send(mapper, "init", applyFilter(content, filter));
+            send(mapper, "init", LogService.applyFilter(content, filter));
           } else {
             content = logService.latestLog(profile);
             String[] newLines = content.split("\n", -1);
@@ -166,19 +142,6 @@ public class LogWebSocketHandler extends TextWebSocketHandler {
       synchronized (wsSession) {
         wsSession.sendMessage(new TextMessage(msg));
       }
-    }
-
-    private static String applyFilter(String content, String filter) {
-      if (filter == null || filter.isBlank()) {
-        return content;
-      }
-      StringBuilder sb = new StringBuilder();
-      for (String line : content.split("\n")) {
-        if (line.toLowerCase().contains(filter.toLowerCase())) {
-          sb.append(line).append('\n');
-        }
-      }
-      return sb.toString();
     }
   }
 }

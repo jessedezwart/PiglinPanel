@@ -36,7 +36,7 @@ public class LogsController extends BaseController {
     if (profile != null) {
       model.addAttribute("logFiles", logService.logFiles(profile));
       String content = logService.latestLog(profile);
-      model.addAttribute("logContent", applyFilter(content, filter));
+      model.addAttribute("logContent", LogService.applyFilter(content, filter));
       model.addAttribute("currentLogPath", "latest.log");
       model.addAttribute("logPath", "latest.log");
       model.addAttribute("isLatest", true);
@@ -62,7 +62,7 @@ public class LogsController extends BaseController {
     if (profile != null) {
       content = logService.latestLog(profile);
     }
-    model.addAttribute("logContent", applyFilter(content, filter));
+    model.addAttribute("logContent", LogService.applyFilter(content, filter));
     model.addAttribute("serverId", serverId);
     model.addAttribute("filter", filter);
     model.addAttribute("isLatest", true);
@@ -82,7 +82,7 @@ public class LogsController extends BaseController {
     if (profile != null) {
       content = fileService.readText(profile, profile.getLogsPath() + "/" + path);
     }
-    model.addAttribute("logContent", applyFilter(content, filter));
+    model.addAttribute("logContent", LogService.applyFilter(content, filter));
     model.addAttribute("serverId", serverId);
     model.addAttribute("filter", filter);
     model.addAttribute("isLatest", false);
@@ -90,14 +90,4 @@ public class LogsController extends BaseController {
     return "fragments/logs :: log-content";
   }
 
-  private static String applyFilter(String content, String filter) {
-    if (filter == null || filter.isBlank()) return content;
-    StringBuilder sb = new StringBuilder();
-    for (String line : content.split("\n")) {
-      if (line.toLowerCase().contains(filter.toLowerCase())) {
-        sb.append(line).append('\n');
-      }
-    }
-    return sb.toString();
-  }
 }

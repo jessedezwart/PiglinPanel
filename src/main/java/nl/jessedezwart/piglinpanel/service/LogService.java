@@ -21,4 +21,18 @@ public class LogService {
   public List<FileEntry> logFiles(ServerProfile profile) throws IOException {
     return fileService.list(profile, profile.getLogsPath());
   }
+
+  public static String applyFilter(String content, String filter) {
+    if (filter == null || filter.isBlank()) {
+      return content;
+    }
+    String lowerFilter = filter.toLowerCase();
+    StringBuilder sb = new StringBuilder();
+    for (String line : content.split("\n")) {
+      if (line.toLowerCase().contains(lowerFilter)) {
+        sb.append(line).append('\n');
+      }
+    }
+    return sb.toString();
+  }
 }

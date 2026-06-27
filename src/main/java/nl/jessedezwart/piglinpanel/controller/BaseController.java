@@ -15,13 +15,7 @@ abstract class BaseController {
   }
 
   protected ServerProfile resolveServer(String serverId) {
-    if (serverId != null && !serverId.isBlank()) {
-      return registryService.servers().stream()
-          .filter(s -> serverId.equals(s.getId()))
-          .findFirst()
-          .orElseGet(() -> registryService.selected().orElse(null));
-    }
-    return registryService.selected().orElse(null);
+    return registryService.resolve(serverId);
   }
 
   protected void populateLayout(Model model, String serverId, String currentView) {
