@@ -6,15 +6,21 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlinx.coroutines.test.runTest
+import nl.jessedezwart.piglinpanel.curseforge.CurseForgeFingerprint
+import nl.jessedezwart.piglinpanel.curseforge.ModFingerprintUpdateSource
 import nl.jessedezwart.piglinpanel.fs.FakeServerFileSystem
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModFolder
 import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.modrinth.ModUpdateSource
+import nl.jessedezwart.piglinpanel.search.ModSource
 
 // SHA-1 of bytes [1, 2, 3]
 private const val HASH_123 = "7037807198c22a7d2b0807371d763779a84fdfcf"
+
+// CurseForge fingerprint of the same bytes
+private val FINGERPRINT_123 = CurseForgeFingerprint.of(byteArrayOf(1, 2, 3))
 
 private class FakeModrinth(
     private val updates: Map<String, ModUpdate> = emptyMap(),
@@ -28,6 +34,24 @@ private class FakeModrinth(
     }
 
     override suspend fun downloadUpdate(update: ModUpdate): ByteArray = byteArrayOf(9, 9)
+}
+
+private class FakeCurseForge(
+    private val updates: Map<Long, ModUpdate> = emptyMap(),
+    override val available: Boolean = true,
+) : ModFingerprintUpdateSource {
+    var lookupCalls = 0
+        private set
+    var requestedFingerprints: List<Long> = emptyList()
+        private set
+
+    override suspend fun findSuggestedUpdates(fingerprints: List<Long>): Map<Long, ModUpdate> {
+        lookupCalls++
+        requestedFingerprints = fingerprints
+        return updates.filterKeys { it in fingerprints }
+    }
+
+    override suspend fun downloadUpdate(update: ModUpdate): ByteArray = byteArrayOf(7, 7, 7)
 }
 
 private fun update(latestName: String = "2.0.0") = ModUpdate(
@@ -48,8 +72,10 @@ private fun update(latestName: String = "2.0.0") = ModUpdate(
 class ModServiceTest {
     private val fs = FakeServerFileSystem()
 
-    private fun service(modrinth: ModUpdateSource = FakeModrinth()) =
-        ModService({ fs }, modrinth, ModHasher())
+    private fun service(
+        modrinth: ModUpdateSource = FakeModrinth(),
+        curseForge: ModFingerprintUpdateSource? = null,
+    ) = ModService({ fs }, modrinth, ModHasher(), curseForge)
 
     @Test
     fun scansMultipleModFoldersAndSeparatesArchivedFiles() = runTest {
@@ -78,6 +104,65 @@ class ModServiceTest {
         val mods = service(FakeModrinth(mapOf(HASH_123 to update()))).scan(profile, checkUpdates = true)
 
         assertEquals("2.0.0", mods.single().update?.latestVersionName)
+    }
+
+    @Test
+    fun fallsBackToCurseForgeForModsModrinthDoesNotKnow() = runTest {
+        fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
+        val curseForgeUpdate = update("cf-3.0").copy(source = ModSource.CURSEFORGE)
+        val curseForge = FakeCurseForge(mapOf(FINGERPRINT_123 to curseForgeUpdate))
+
+        val mods = service(FakeModrinth(), curseForge).scan(ServerProfile(), checkUpdates = true)
+
+        assertEquals("cf-3.0", mods.single().update?.latestVersionName)
+        assertEquals(ModSource.CURSEFORGE, mods.single().update?.source)
+    }
+
+    @Test
+    fun modrinthMatchWinsAndIsNotLookedUpOnCurseForge() = runTest {
+        fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
+        val curseForge = FakeCurseForge(mapOf(FINGERPRINT_123 to update("cf-3.0")))
+
+        val mods = service(FakeModrinth(mapOf(HASH_123 to update())), curseForge)
+            .scan(ServerProfile(), checkUpdates = true)
+
+        assertEquals("2.0.0", mods.single().update?.latestVersionName)
+        assertEquals(emptyList(), curseForge.requestedFingerprints)
+        assertEquals(0, curseForge.lookupCalls)
+    }
+
+    @Test
+    fun skipsCurseForgeLookupWhenNoApiKeyConfigured() = runTest {
+        fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
+        val curseForge = FakeCurseForge(available = false)
+
+        service(FakeModrinth(), curseForge).scan(ServerProfile(), checkUpdates = true)
+
+        assertEquals(0, curseForge.lookupCalls)
+    }
+
+    @Test
+    fun cachesCurseForgeUpdatesAndSkipsSecondLookup() = runTest {
+        fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
+        val curseForge = FakeCurseForge(mapOf(FINGERPRINT_123 to update().copy(source = ModSource.CURSEFORGE)))
+        val service = service(FakeModrinth(), curseForge)
+
+        service.scan(ServerProfile(), checkUpdates = true)
+        service.scan(ServerProfile(), checkUpdates = true)
+
+        assertEquals(1, curseForge.lookupCalls)
+    }
+
+    @Test
+    fun applyUpdateDownloadsCurseForgeUpdatesFromCurseForge() = runTest {
+        fs.put("mods/old.jar", byteArrayOf(1, 2, 3))
+        val curseForgeUpdate = update().copy(source = ModSource.CURSEFORGE)
+        val mod = ModFile("mods", "mods", "mods", "mods/old.jar", "old.jar", 3, false, HASH_123, curseForgeUpdate)
+
+        service(FakeModrinth(), FakeCurseForge()).applyUpdate(ServerProfile(), mod)
+
+        assertTrue("mods/old.jar.disabled" in fs.files)
+        assertEquals(3, fs.files["mods/mod.jar"]?.size)
     }
 
     @Test

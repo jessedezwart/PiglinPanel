@@ -4,10 +4,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
@@ -30,6 +32,7 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
+import nl.jessedezwart.piglinpanel.desktop.ui.common.ModSourceBadge
 import nl.jessedezwart.piglinpanel.desktop.ui.common.OutlinedButton
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Tab
 import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
@@ -263,6 +266,8 @@ private fun ModGroupCard(
                 val update = group.update
                 if (update != null && update.available()) {
                     Button(onClick = { group.active?.let(onApplyUpdate) }, enabled = enabled) {
+                        ModSourceBadge(update.source)
+                        Spacer(Modifier.width(6.dp))
                         Text("Update to ${update.latestVersionName ?: update.latestVersionId}")
                     }
                 }

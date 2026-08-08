@@ -3,10 +3,17 @@ package nl.jessedezwart.piglinpanel.curseforge
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.readRawBytes
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
+import kotlin.time.Instant
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.search.ModDependency
 import nl.jessedezwart.piglinpanel.search.ModSearchHit
 import nl.jessedezwart.piglinpanel.search.ModSearchPage
@@ -29,7 +36,7 @@ class CurseForgeClient(
     private val http: HttpClient,
     private val apiKey: () -> String?,
     private val apiBaseUrl: String = API_BASE_URL,
-) : ModSearchSource {
+) : ModSearchSource, ModFingerprintUpdateSource {
     companion object {
         const val API_BASE_URL = "https://api.curseforge.com/v1"
 
@@ -90,7 +97,9 @@ class CurseForgeClient(
         projectId: String,
         loader: String?,
         mcVersion: String?,
-    ): ModVersionInfo? {
+    ): ModVersionInfo? = latestFile(projectId, loader, mcVersion)?.let { toVersionInfo(projectId, it) }
+
+    private suspend fun latestFile(projectId: String, loader: String?, mcVersion: String?): CurseForgeFile? {
         val uri = "$apiBaseUrl/mods/${projectId.encodeURLParameter()}/files?" + queryString(
             "modLoaderType" to CurseForgeLoaderType.fromName(loader)?.toString(),
             "gameVersion" to mcVersion?.takeIf { it.isNotBlank() },
@@ -99,15 +108,22 @@ class CurseForgeClient(
         val response = get(uri)
         requireSuccess(response, uri)
         val result = json.decodeFromString<CurseForgeFilesResponse>(response.bodyText())
-        val best = result.data
-            .filter { !it.downloadUrl.isNullOrBlank() }
-            .sortedWith(
-                compareByDescending<CurseForgeFile> { it.releaseType == CurseForgeReleaseType.RELEASE }
-                    .thenByDescending { it.fileDate.orEmpty() },
-            )
-            .firstOrNull()
-        return best?.let { toVersionInfo(projectId, it) }
+        return bestFile(result.data, loader = null, mcVersion = null)
     }
+
+    /**
+     * Newest downloadable file, preferring stable releases. [loader]/[mcVersion] filter unfiltered
+     * lists (such as `latestFiles`); pass nulls when the server already filtered.
+     */
+    private fun bestFile(files: List<CurseForgeFile>, loader: String?, mcVersion: String?): CurseForgeFile? = files
+        .filter { !it.downloadUrl.isNullOrBlank() }
+        .filter { file -> loader == null || loaderOf(file) == null || loaderOf(file) == loader }
+        .filter { file -> mcVersion == null || file.gameVersions.contains(mcVersion) }
+        .sortedWith(
+            compareByDescending<CurseForgeFile> { it.releaseType == CurseForgeReleaseType.RELEASE }
+                .thenByDescending { it.fileDate.orEmpty() },
+        )
+        .firstOrNull()
 
     override suspend fun version(projectId: String, versionId: String): ModVersionInfo? {
         val uri = "$apiBaseUrl/mods/${projectId.encodeURLParameter()}/files/${versionId.encodeURLParameter()}"
@@ -118,10 +134,110 @@ class CurseForgeClient(
         return toVersionInfo(projectId, file)
     }
 
-    override suspend fun downloadFile(version: ModVersionInfo): ByteArray {
-        val response = get(version.downloadUrl)
+    override suspend fun downloadFile(version: ModVersionInfo): ByteArray = download(version.downloadUrl)
+
+    /**
+     * Resolves suggested updates for the given file fingerprints (see [CurseForgeFingerprint]).
+     * Fingerprints CurseForge doesn't know are absent from the result; known-but-current mods map
+     * to an update whose [ModUpdate.available] is false.
+     */
+    override suspend fun findSuggestedUpdates(fingerprints: List<Long>): Map<Long, ModUpdate> {
+        val requested = fingerprints.distinct()
+        if (requested.isEmpty()) {
+            return emptyMap()
+        }
+
+        val matches = exactMatches(requested)
+        if (matches.isEmpty()) {
+            return emptyMap()
+        }
+
+        val mods = getMods(matches.mapNotNull { it.id }.distinct())
+
+        val updates = LinkedHashMap<Long, ModUpdate>()
+        for (match in matches) {
+            val modId = match.id ?: continue
+            val current = match.file ?: continue
+            val fingerprint = current.fileFingerprint ?: continue
+            if (fingerprint !in requested) continue
+            val mod = mods[modId]
+            val loader = loaderOf(current)
+            val mcVersion = mcVersionOf(current)
+            // The bulk /mods response already carries the newest files, so the common case needs no
+            // extra request; only mods whose latestFiles hold nothing compatible are queried.
+            val latest = bestFile(mod?.latestFiles.orEmpty(), loader, mcVersion)
+                ?: try {
+                    latestFile(modId.toString(), loader, mcVersion)
+                } catch (e: IOException) {
+                    null
+                }
+            updates[fingerprint] = toModUpdate(modId, current, latest, mod)
+        }
+        return updates
+    }
+
+    override suspend fun downloadUpdate(update: ModUpdate): ByteArray {
+        val url = update.downloadUrl
+            ?: throw IOException("No download URL is available for CurseForge update $update")
+        return download(url)
+    }
+
+    private suspend fun exactMatches(fingerprints: List<Long>): List<CurseForgeFingerprintMatch> {
+        val uri = "$apiBaseUrl/fingerprints"
+        val response = postJson(uri, FingerprintsRequest(fingerprints))
+        requireSuccess(response, uri)
+        return json.decodeFromString<CurseForgeFingerprintsResponse>(response.bodyText()).data.exactMatches
+    }
+
+    private suspend fun getMods(modIds: List<Int>): Map<Int, CurseForgeMod> {
+        if (modIds.isEmpty()) {
+            return emptyMap()
+        }
+        val uri = "$apiBaseUrl/mods"
+        val response = postJson(uri, ModsRequest(modIds))
+        requireSuccess(response, uri)
+        return json.decodeFromString<CurseForgeModsResponse>(response.bodyText()).data
+            .mapNotNull { mod -> mod.id?.let { it to mod } }
+            .toMap(LinkedHashMap())
+    }
+
+    private fun toModUpdate(
+        modId: Int,
+        current: CurseForgeFile,
+        latest: CurseForgeFile?,
+        mod: CurseForgeMod?,
+    ): ModUpdate {
+        val hasDownload = !latest?.downloadUrl.isNullOrBlank() && latest?.fileName != null
+        return ModUpdate(
+            source = ModSource.CURSEFORGE,
+            projectId = modId.toString(),
+            projectName = mod?.name,
+            currentVersionId = current.id?.toString(),
+            latestVersionId = latest?.id?.toString() ?: current.id?.toString(),
+            latestVersionName = (latest ?: current).displayName ?: (latest ?: current).fileName,
+            lastUpdatedAt = parseInstant((latest ?: current).fileDate),
+            downloadUrl = if (hasDownload) latest?.downloadUrl else null,
+            fileName = if (hasDownload) latest?.fileName else null,
+            iconUrl = mod?.logo?.thumbnailUrl,
+            clientSide = null,
+            serverSide = null,
+            downloads = mod?.downloadCount ?: 0,
+        )
+    }
+
+    private fun parseInstant(value: String?): Instant? =
+        value?.takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() }
+
+    private fun loaderOf(file: CurseForgeFile): String? =
+        file.gameVersions.map { it.lowercase() }.firstOrNull { it in CURSEFORGE_LOADER_NAMES }
+
+    private fun mcVersionOf(file: CurseForgeFile): String? =
+        file.gameVersions.firstOrNull { it.firstOrNull()?.isDigit() == true }
+
+    private suspend fun download(url: String): ByteArray {
+        val response = get(url)
         if (response.statusCode / 100 != 2) {
-            throw CurseForgeHttpException(response.statusCode, version.downloadUrl)
+            throw CurseForgeHttpException(response.statusCode, url)
         }
         return response.body
     }
@@ -175,6 +291,24 @@ class CurseForgeClient(
         throw IOException("CurseForge request failed for $uri", e)
     }
 
+    private suspend inline fun <reified T> postJson(uri: String, body: T): Response = try {
+        val key = apiKey()
+        if (key.isNullOrBlank()) {
+            throw IOException("CurseForge API key is not configured")
+        }
+        toResponse(
+            http.post(uri) {
+                header("x-api-key", key)
+                contentType(ContentType.Application.Json)
+                setBody(json.encodeToString(body))
+            },
+        )
+    } catch (e: IOException) {
+        throw e
+    } catch (e: Exception) {
+        throw IOException("CurseForge request failed for $uri", e)
+    }
+
     private suspend fun toResponse(response: HttpResponse): Response =
         Response(response.status.value, response.readRawBytes())
 
@@ -186,4 +320,10 @@ class CurseForgeClient(
             throw CurseForgeHttpException(response.statusCode, uri)
         }
     }
+
+    @Serializable
+    data class FingerprintsRequest(val fingerprints: List<Long>)
+
+    @Serializable
+    data class ModsRequest(val modIds: List<Int>)
 }

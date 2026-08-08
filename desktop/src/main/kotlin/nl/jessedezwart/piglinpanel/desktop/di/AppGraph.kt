@@ -50,7 +50,7 @@ class AppGraph {
     )
     private val searchSources: () -> List<ModSearchSource> = { listOf(modrinthClient, curseForgeClient) }
     val modSearchService = ModSearchService(searchSources)
-    val modService = ModService(fileSystems, modrinthClient, ModHasher())
+    val modService = ModService(fileSystems, modrinthClient, ModHasher(), curseForgeClient)
     val modInstallService = ModInstallService(modService, searchSources)
     val fileService = FileService(fileSystems, QuerzNbtCodec())
     val logService = LogService(fileService)

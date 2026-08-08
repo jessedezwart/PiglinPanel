@@ -2,6 +2,7 @@ package nl.jessedezwart.piglinpanel.model
 
 import kotlin.math.roundToLong
 import kotlin.time.Instant
+import nl.jessedezwart.piglinpanel.search.ModSource
 
 data class ModFile(
     val folderId: String,
@@ -18,7 +19,7 @@ data class ModFile(
 /**
  * A mod and all of its on-disk versions grouped together. The [active] file is the enabled `.jar`;
  * [archived] holds the disabled (`.jar.disabled`) versions that can be re-activated. [update] is
- * the suggested Modrinth update for the active version, if any.
+ * the suggested update for the active version, if any.
  */
 data class ModGroup(
     val key: String,
@@ -45,6 +46,8 @@ data class ModUpdate(
     val clientSide: String?,
     val serverSide: String?,
     val downloads: Long,
+    /** Which repository resolved this update; determines who downloads [downloadUrl]. */
+    val source: ModSource = ModSource.MODRINTH,
 ) {
     fun available(): Boolean =
         latestVersionId != null && latestVersionId != currentVersionId && downloadUrl != null

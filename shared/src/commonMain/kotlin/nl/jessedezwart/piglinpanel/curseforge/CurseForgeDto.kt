@@ -25,6 +25,8 @@ data class CurseForgeMod(
     val logo: CurseForgeLogo? = null,
     val authors: List<CurseForgeAuthor> = emptyList(),
     val downloadCount: Long = 0,
+    /** Populated by the bulk `/mods` endpoint; the newest file per game version + loader. */
+    val latestFiles: List<CurseForgeFile> = emptyList(),
 )
 
 @Serializable
@@ -32,6 +34,25 @@ data class CurseForgeLogo(val thumbnailUrl: String? = null)
 
 @Serializable
 data class CurseForgeAuthor(val name: String? = null)
+
+@Serializable
+data class CurseForgeModsResponse(val data: List<CurseForgeMod> = emptyList())
+
+@Serializable
+data class CurseForgeFingerprintsResponse(
+    val data: CurseForgeFingerprintMatches = CurseForgeFingerprintMatches(),
+)
+
+@Serializable
+data class CurseForgeFingerprintMatches(
+    val exactMatches: List<CurseForgeFingerprintMatch> = emptyList(),
+)
+
+@Serializable
+data class CurseForgeFingerprintMatch(
+    val id: Int? = null,
+    val file: CurseForgeFile? = null,
+)
 
 @Serializable
 data class CurseForgeFilesResponse(
@@ -52,7 +73,11 @@ data class CurseForgeFile(
     val gameVersions: List<String> = emptyList(),
     val dependencies: List<CurseForgeFileDependency> = emptyList(),
     val fileDate: String? = null,
+    val fileFingerprint: Long? = null,
 )
+
+/** Loader names CurseForge mixes into [CurseForgeFile.gameVersions] alongside Minecraft versions. */
+internal val CURSEFORGE_LOADER_NAMES = setOf("forge", "fabric", "quilt", "neoforge")
 
 @Serializable
 data class CurseForgeFileDependency(

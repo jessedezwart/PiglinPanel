@@ -3,6 +3,7 @@ package nl.jessedezwart.piglinpanel.mods
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import nl.jessedezwart.piglinpanel.cache.SuspendCache
+import nl.jessedezwart.piglinpanel.curseforge.ModFingerprintUpdateSource
 import nl.jessedezwart.piglinpanel.fs.ServerFileSystemProvider
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModFolder
@@ -10,6 +11,7 @@ import nl.jessedezwart.piglinpanel.model.ModGroup
 import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.modrinth.ModUpdateSource
+import nl.jessedezwart.piglinpanel.search.ModSource
 import okio.IOException
 
 /** Live scan progress for UI indicators. */
@@ -19,6 +21,7 @@ class ModService(
     private val fileSystems: ServerFileSystemProvider,
     private val modrinthClient: ModUpdateSource,
     private val modHasher: ModHasher,
+    private val curseForgeClient: ModFingerprintUpdateSource? = null,
 ) {
     companion object {
         private const val DISABLED_SUFFIX = ".disabled"
@@ -66,21 +69,22 @@ class ModService(
         }
 
         val mods = ArrayList<ModFile>(candidates.size)
-        val lookupHashesByPath = LinkedHashMap<String, String>()
+        val lookupHashesByPath = LinkedHashMap<String, ModFileHashes>()
         val total = candidates.size
         for ((index, candidate) in candidates.withIndex()) {
             val (folder, entry) = candidate
-            var sha1: String? = null
+            var hashes: ModFileHashes? = null
             if (checkUpdates) {
-                sha1 = try {
-                    modHasher.resolveSha1(profile, fileSystem, entry)
+                hashes = try {
+                    modHasher.resolveHashes(profile, fileSystem, entry)
                 } catch (e: IOException) {
                     null
                 }
             }
-            if (checkUpdates && sha1 != null) {
-                lookupHashesByPath[entry.path] = sha1
+            if (hashes != null) {
+                lookupHashesByPath[entry.path] = hashes
             }
+            val sha1 = hashes?.sha1
             mods += ModFile(
                 folderId = folder.id,
                 folderName = folder.name,
@@ -142,14 +146,18 @@ class ModService(
         }
         val fileSystem = fileSystems.fileSystem(profile)
         val archivedName = nextArchiveName(modFile.relativePath)
-        val bytes = modrinthClient.downloadUpdate(update)
+        val bytes = when (update.source) {
+            ModSource.MODRINTH -> modrinthClient.downloadUpdate(update)
+            ModSource.CURSEFORGE -> curseForgeClient?.downloadUpdate(update)
+                ?: throw IOException("CurseForge is not configured; cannot update ${modFile.fileName}")
+        }
         fileSystem.move(modFile.relativePath, archivedName)
         fileSystem.writeBytes(joinPath(modFile.folderPath, update.fileName!!), bytes)
     }
 
     /**
-     * Collapses scanned files into one [ModGroup] per mod (keyed by Modrinth project when known,
-     * otherwise by file path), surfacing the active version with its disabled versions sorted
+     * Collapses scanned files into one [ModGroup] per mod (keyed by the resolved Modrinth/CurseForge
+     * project when known, otherwise by file path), surfacing the active version with its disabled versions sorted
      * newest first.
      */
     fun group(mods: List<ModFile>): List<ModGroup> {
@@ -173,8 +181,11 @@ class ModService(
         }
     }
 
-    private fun groupKey(mod: ModFile): String =
-        mod.update?.projectId?.let { "project:$it" } ?: "file:${mod.relativePath}"
+    private fun groupKey(mod: ModFile): String {
+        val update = mod.update
+        val projectId = update?.projectId
+        return if (projectId != null) "project:${update.source}:$projectId" else "file:${mod.relativePath}"
+    }
 
     private fun displayName(mod: ModFile): String =
         mod.update?.projectName?.takeIf { it.isNotBlank() } ?: mod.fileName
@@ -182,41 +193,72 @@ class ModService(
     private fun publishedAt(mod: ModFile): Instant =
         mod.update?.lastUpdatedAt ?: Instant.fromEpochMilliseconds(0)
 
+    /**
+     * Looks each mod up on Modrinth by SHA-1 and, in the same pass, on CurseForge by fingerprint.
+     * Both lookups are batched, so checking both costs a fixed handful of requests. A Modrinth
+     * match wins where both repositories know a file; CurseForge covers the rest.
+     */
     private suspend fun applySuggestedUpdates(
         mods: MutableList<ModFile>,
-        lookupHashesByPath: Map<String, String>,
+        lookupHashesByPath: Map<String, ModFileHashes>,
         forceRefresh: Boolean,
     ) {
-        val allHashes = lookupHashesByPath.values.distinct()
-
         val resolved = LinkedHashMap<String, ModUpdate>()
-        val missing = mutableListOf<String>()
-        for (hash in allHashes) {
-            val cached = if (forceRefresh) null else updatesCache.getIfPresent(hash)
-            if (cached != null) {
-                resolved[hash] = cached
-            } else {
-                missing += hash
-            }
-        }
 
-        if (missing.isNotEmpty()) {
+        val missingSha1s = mutableListOf<String>()
+        for (sha1 in lookupHashesByPath.values.map { it.sha1 }.distinct()) {
+            val cached = if (forceRefresh) null else updatesCache.getIfPresent(modrinthCacheKey(sha1))
+            if (cached != null) resolved[sha1] = cached else missingSha1s += sha1
+        }
+        if (missingSha1s.isNotEmpty()) {
             val fetched = try {
-                modrinthClient.findSuggestedUpdates(missing)
+                modrinthClient.findSuggestedUpdates(missingSha1s)
             } catch (e: IOException) {
                 emptyMap()
             }
-            for (hash in missing) {
-                val update = fetched[hash] ?: continue
-                resolved[hash] = update
-                updatesCache.put(hash, update)
+            for (sha1 in missingSha1s) {
+                val update = fetched[sha1] ?: continue
+                resolved[sha1] = update
+                updatesCache.put(modrinthCacheKey(sha1), update)
+            }
+        }
+
+        // Fingerprints of the files Modrinth had nothing for.
+        val curseForgeResolved = LinkedHashMap<Long, ModUpdate>()
+        val unmatchedFingerprints = lookupHashesByPath.values
+            .filter { it.sha1 !in resolved }
+            .map { it.fingerprint }
+            .distinct()
+        val curseForge = curseForgeClient
+        if (curseForge != null && curseForge.available && unmatchedFingerprints.isNotEmpty()) {
+            val missingFingerprints = mutableListOf<Long>()
+            for (fingerprint in unmatchedFingerprints) {
+                val cached = if (forceRefresh) null else updatesCache.getIfPresent(curseForgeCacheKey(fingerprint))
+                if (cached != null) curseForgeResolved[fingerprint] = cached else missingFingerprints += fingerprint
+            }
+            if (missingFingerprints.isNotEmpty()) {
+                val fetched = try {
+                    curseForge.findSuggestedUpdates(missingFingerprints)
+                } catch (e: IOException) {
+                    emptyMap()
+                }
+                for (fingerprint in missingFingerprints) {
+                    val update = fetched[fingerprint] ?: continue
+                    curseForgeResolved[fingerprint] = update
+                    updatesCache.put(curseForgeCacheKey(fingerprint), update)
+                }
             }
         }
 
         for (i in mods.indices) {
             val mod = mods[i]
-            val hash = lookupHashesByPath[mod.relativePath] ?: continue
-            mods[i] = mod.copy(update = resolved[hash] ?: mod.update)
+            val hashes = lookupHashesByPath[mod.relativePath] ?: continue
+            val update = resolved[hashes.sha1] ?: curseForgeResolved[hashes.fingerprint] ?: mod.update
+            mods[i] = mod.copy(update = update)
         }
     }
+
+    private fun modrinthCacheKey(sha1: String): String = "modrinth:$sha1"
+
+    private fun curseForgeCacheKey(fingerprint: Long): String = "curseforge:$fingerprint"
 }
