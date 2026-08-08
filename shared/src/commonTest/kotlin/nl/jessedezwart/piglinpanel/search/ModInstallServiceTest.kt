@@ -107,6 +107,31 @@ class ModInstallServiceTest {
     }
 
     @Test
+    fun dependencyFollowsTheFolderItsDependentIsAlreadyIn() = runTest {
+        val server = ModFolder("server", "Server", "mods")
+        val client = ModFolder("client", "Client", "client-mods")
+        val twoFolders = ServerProfile(modFolders = listOf(server, client))
+        fs.put("client-mods/main.jar", byteArrayOf(9))
+        val modrinth = FakeModSearchSource(ModSource.MODRINTH).apply {
+            versions["main"] = version(
+                ModSource.MODRINTH, "main", "v1", "main.jar",
+                deps = listOf(ModDependency(ModSource.MODRINTH, "dep", null, required = true)),
+            )
+            versions["dep"] = version(ModSource.MODRINTH, "dep", "v1", "dep.jar")
+            downloads["dep.jar"] = byteArrayOf(2)
+        }
+        val install = ModInstallService(modService(), { listOf(modrinth) })
+
+        // Installed from the server folder, but the mod itself lives in the client one.
+        val result = install.install(twoFolders, server, hit(ModSource.MODRINTH, "main"), loader = null, mcVersion = null)
+
+        assertEquals(listOf("main.jar"), result.skipped)
+        assertEquals(listOf("dep.jar"), result.installed)
+        assertEquals(byteArrayOf(2).toList(), fs.files["client-mods/dep.jar"]!!.toList())
+        assertTrue("mods/dep.jar" !in fs.files)
+    }
+
+    @Test
     fun cyclicDependenciesTerminate() = runTest {
         val modrinth = FakeModSearchSource(ModSource.MODRINTH).apply {
             versions["a"] = version(ModSource.MODRINTH, "a", "v1", "a.jar", deps = listOf(ModDependency(ModSource.MODRINTH, "b", null, true)))

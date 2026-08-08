@@ -81,6 +81,29 @@ class SuspendCache<K : Any, V>(
         }
     }
 
+    /** Seeds the cache, e.g. from a persisted snapshot. Existing entries are left untouched. */
+    suspend fun putAll(values: Map<K, V>) {
+        mutex.withLock {
+            val now = TimeSource.Monotonic.markNow()
+            for ((key, value) in values) {
+                if (key in entries) continue
+                entries[key] = Entry(value, now)
+            }
+            while (entries.size > maxEntries) {
+                entries.remove(entries.keys.first())
+            }
+        }
+    }
+
+    /** The live entries, least-recently-used first, with expired ones dropped. */
+    suspend fun snapshot(): Map<K, V> = mutex.withLock {
+        val live = LinkedHashMap<K, V>(entries.size)
+        for ((key, entry) in entries) {
+            if (entry.insertedAt.elapsedNow() < ttl) live[key] = entry.value
+        }
+        live
+    }
+
     suspend fun invalidate(key: K) {
         mutex.withLock { entries.remove(key) }
     }

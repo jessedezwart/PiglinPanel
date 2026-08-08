@@ -1,7 +1,6 @@
 package nl.jessedezwart.piglinpanel.mods
 
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Instant
 import nl.jessedezwart.piglinpanel.cache.SuspendCache
 import nl.jessedezwart.piglinpanel.curseforge.ModFingerprintUpdateSource
 import nl.jessedezwart.piglinpanel.fs.ServerFileSystemProvider
@@ -43,7 +42,7 @@ class ModService(
         }
     }
 
-    private val updatesCache = SuspendCache<String, ModUpdate>(ttl = 24.hours, maxEntries = 500)
+    private val updatesCache = SuspendCache<String, ModUpdate>(ttl = 24.hours, maxEntries = 1000)
 
     suspend fun scan(
         profile: ServerProfile,
@@ -73,13 +72,16 @@ class ModService(
         val total = candidates.size
         for ((index, candidate) in candidates.withIndex()) {
             val (folder, entry) = candidate
-            var hashes: ModFileHashes? = null
-            if (checkUpdates) {
-                hashes = try {
+            // A quick scan reads nothing, but it can still reuse what an earlier scan learned, so
+            // dependency warnings do not disappear the moment you use it.
+            val hashes: ModFileHashes? = if (checkUpdates) {
+                try {
                     modHasher.resolveHashes(profile, fileSystem, entry)
                 } catch (e: IOException) {
                     null
                 }
+            } else {
+                modHasher.cachedHashes(profile, entry)
             }
             if (hashes != null) {
                 lookupHashesByPath[entry.path] = hashes
@@ -95,8 +97,14 @@ class ModService(
                 archived = entry.name.endsWith(DISABLED_SUFFIX),
                 sha1 = sha1,
                 update = null,
+                metadata = hashes?.metadata,
             )
             progress?.invoke(ScanProgress("hashing", index + 1, total, entry.name))
+        }
+
+        if (checkUpdates) {
+            // Persist before the lookups, so a failure there does not throw away the expensive part.
+            modHasher.flush()
         }
 
         if (checkUpdates && lookupHashesByPath.isNotEmpty()) {
@@ -165,10 +173,17 @@ class ModService(
         for (mod in mods) {
             byKey.getOrPut(groupKey(mod)) { mutableListOf() }.add(mod)
         }
+        val graph = ModDependencyGraph.of(mods)
         return byKey.map { (key, files) ->
             val active = files.firstOrNull { !it.archived }
             val representative = active ?: files.first()
-            val archived = files.filter { it !== active }.sortedByDescending(::publishedAt)
+            // Every other file of this mod. Usually the disabled versions, but a second *enabled*
+            // jar lands here too — that is a broken state worth surfacing, so it sorts to the top
+            // rather than being hidden.
+            val archived = files.asSequence()
+                .filter { it !== active }
+                .sortedWith(compareBy<ModFile> { it.archived }.thenByDescending { it.fileName })
+                .toList()
             ModGroup(
                 key = key,
                 displayName = displayName(representative),
@@ -177,21 +192,52 @@ class ModService(
                 active = active,
                 archived = archived,
                 update = active?.update,
+                requiredBy = active?.let { graph.dependentsOf(it).map(::displayName).distinct() }.orEmpty(),
+                missingDependencies = active?.let(graph::missingDependenciesOf).orEmpty(),
             )
         }
     }
 
+    /**
+     * Enables the disabled jars [target] needs in order to load, resolved transitively. Returns the
+     * files it enabled, which is empty when everything it needs is already enabled — or when the
+     * missing pieces are not installed at all, since those need downloading rather than a rename.
+     */
+    suspend fun enableRequiredDependencies(
+        profile: ServerProfile,
+        mods: List<ModFile>,
+        target: ModFile,
+    ): List<ModFile> {
+        val needed = ModDependencyGraph.of(mods).disabledDependenciesOf(target)
+        for (dependency in needed) {
+            enablePath(profile, dependency.relativePath)
+        }
+        return needed
+    }
+
+    /** The enabled mods that would lose a required dependency if [target] were disabled or deleted. */
+    fun dependentsBrokenBy(mods: List<ModFile>, target: ModFile): List<String> =
+        ModDependencyGraph.of(mods).wouldBreakIfRemoved(target).map(::displayName).distinct()
+
+    /**
+     * Identity of the mod a file belongs to, so its versions collapse into one group. The jar's own
+     * mod id backs up the repository match: it groups mods no repository indexes, and — unlike the
+     * file path — it does not change when a version is enabled or disabled.
+     */
     private fun groupKey(mod: ModFile): String {
         val update = mod.update
         val projectId = update?.projectId
-        return if (projectId != null) "project:${update.source}:$projectId" else "file:${mod.relativePath}"
+        return when {
+            projectId != null -> "project:${update.source}:$projectId"
+            mod.metadata != null -> "mod:${mod.metadata.modId}"
+            else -> "file:${mod.relativePath}"
+        }
     }
 
     private fun displayName(mod: ModFile): String =
-        mod.update?.projectName?.takeIf { it.isNotBlank() } ?: mod.fileName
-
-    private fun publishedAt(mod: ModFile): Instant =
-        mod.update?.lastUpdatedAt ?: Instant.fromEpochMilliseconds(0)
+        mod.update?.projectName?.takeIf { it.isNotBlank() }
+            ?: mod.metadata?.name?.takeIf { it.isNotBlank() }
+            ?: mod.fileName
 
     /**
      * Looks each mod up on Modrinth by SHA-1 and, in the same pass, on CurseForge by fingerprint.

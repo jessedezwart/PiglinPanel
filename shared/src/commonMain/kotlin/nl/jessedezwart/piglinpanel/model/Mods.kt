@@ -2,6 +2,7 @@ package nl.jessedezwart.piglinpanel.model
 
 import kotlin.math.roundToLong
 import kotlin.time.Instant
+import nl.jessedezwart.piglinpanel.mods.ModJarMetadata
 import nl.jessedezwart.piglinpanel.search.ModSource
 
 data class ModFile(
@@ -14,6 +15,8 @@ data class ModFile(
     val archived: Boolean,
     val sha1: String?,
     val update: ModUpdate?,
+    /** What the jar declares about itself; null when it has not been read or has no manifest. */
+    val metadata: ModJarMetadata? = null,
 )
 
 /**
@@ -29,9 +32,11 @@ data class ModGroup(
     val active: ModFile?,
     val archived: List<ModFile>,
     val update: ModUpdate?,
-) {
-    fun hasArchived(): Boolean = archived.isNotEmpty()
-}
+    /** Names of enabled mods that declare a hard dependency on this one; empty when nothing does. */
+    val requiredBy: List<String> = emptyList(),
+    /** Required mod ids that no enabled jar provides — this mod will not load as things stand. */
+    val missingDependencies: List<String> = emptyList(),
+)
 
 data class ModUpdate(
     val projectId: String?,

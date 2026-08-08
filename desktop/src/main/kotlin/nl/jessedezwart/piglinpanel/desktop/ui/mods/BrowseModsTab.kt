@@ -97,7 +97,7 @@ fun BrowseModsTab(
         }
     }
 
-    LaunchedEffect(profile.id, query, loader, mcVersion, folder?.id) {
+    LaunchedEffect(profile.id, query, loader, mcVersion) {
         delay(400)
         runSearch(reset = true)
     }
@@ -139,7 +139,9 @@ fun BrowseModsTab(
                 singleLine = true,
                 modifier = Modifier.width(140.dp),
             )
-            if (profile.modFolders.size > 1) {
+            // Shown even for a single folder: where a download lands is worth seeing before clicking
+            // Install, and a profile can gain a second folder without the user going looking for it.
+            if (profile.modFolders.isNotEmpty()) {
                 ExposedDropdownMenuBox(expanded = folderMenuExpanded, onExpandedChange = { folderMenuExpanded = it }) {
                     OutlinedTextField(
                         value = folder?.displayName ?: "mods",

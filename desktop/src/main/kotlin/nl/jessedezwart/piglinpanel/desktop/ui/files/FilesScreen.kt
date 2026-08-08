@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -37,6 +39,9 @@ import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
 import nl.jessedezwart.piglinpanel.desktop.ui.common.CodeEditor
 import nl.jessedezwart.piglinpanel.desktop.ui.common.IconButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_HEIGHT
+import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_ICON
+import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_TEXT_BUTTON_PADDING
 import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
 import nl.jessedezwart.piglinpanel.desktop.ui.common.codeLangFor
 import nl.jessedezwart.piglinpanel.fs.FileContent
@@ -122,36 +127,55 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
         }
     }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Breadcrumbs(currentDir) { currentDir = it; openFile = null }
-        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Card(Modifier.width(360.dp)) {
-                LazyColumn(Modifier.padding(6.dp)) {
+        Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Card(Modifier.width(300.dp)) {
+                LazyColumn(Modifier.padding(4.dp)) {
                     items(entries, key = { it.path }) { entry ->
                         Row(
-                            Modifier.fillMaxWidth(),
+                            Modifier.fillMaxWidth().height(ROW_HEIGHT),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
                                 if (entry.directory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
                                 contentDescription = null,
+                                modifier = Modifier.size(ROW_ICON),
                                 tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
                             )
-                            TextButton(onClick = { openEntry(entry) }, modifier = Modifier.weight(1f)) {
-                                Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            TextButton(
+                                onClick = { openEntry(entry) },
+                                modifier = Modifier.weight(1f).height(ROW_HEIGHT),
+                                contentPadding = ROW_TEXT_BUTTON_PADDING,
+                            ) {
+                                Text(
+                                    entry.name,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
-                            IconButton(onClick = { renaming = entry }) {
-                                Icon(Icons.Default.DriveFileRenameOutline, contentDescription = "Rename")
+                            IconButton(onClick = { renaming = entry }, modifier = Modifier.size(ROW_HEIGHT)) {
+                                Icon(
+                                    Icons.Default.DriveFileRenameOutline,
+                                    contentDescription = "Rename",
+                                    modifier = Modifier.size(ROW_ICON),
+                                )
                             }
-                            IconButton(onClick = { deleting = entry }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete")
+                            IconButton(onClick = { deleting = entry }, modifier = Modifier.size(ROW_HEIGHT)) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    modifier = Modifier.size(ROW_ICON),
+                                )
                             }
                         }
                     }
                 }
             }
             Card(Modifier.weight(1f).fillMaxSize()) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     when (val file = openFile) {
                         null -> Text("Select a file to view or edit.", style = MaterialTheme.typography.bodyMedium)
                         else -> {
@@ -225,16 +249,26 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
 
 @Composable
 private fun Breadcrumbs(currentDir: String, onNavigate: (String) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { onNavigate("") }) { Text("root") }
+    @Composable
+    fun Crumb(label: String, target: String) {
+        TextButton(
+            onClick = { onNavigate(target) },
+            modifier = Modifier.height(ROW_HEIGHT),
+            contentPadding = ROW_TEXT_BUTTON_PADDING,
+        ) {
+            Text(label, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        }
+    }
+
+    Row(Modifier.height(ROW_HEIGHT), verticalAlignment = Alignment.CenterVertically) {
+        Crumb("root", "")
         if (currentDir.isNotBlank()) {
             val segments = currentDir.split('/')
             var path = ""
             for (segment in segments) {
                 path = if (path.isEmpty()) segment else "$path/$segment"
-                val target = path
-                Text("/", color = MaterialTheme.colorScheme.secondary)
-                TextButton(onClick = { onNavigate(target) }) { Text(segment) }
+                Text("/", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                Crumb(segment, path)
             }
         }
     }

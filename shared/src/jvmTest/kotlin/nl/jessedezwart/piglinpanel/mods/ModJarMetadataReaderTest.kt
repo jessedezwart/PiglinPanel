@@ -1,0 +1,145 @@
+package nl.jessedezwart.piglinpanel.mods
+
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class ModJarMetadataReaderTest {
+    private fun jar(vararg entries: Pair<String, String>): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            // A real mod jar has classes in it too; the reader must find the manifest among them.
+            zip.putNextEntry(ZipEntry("net/example/Mod.class"))
+            zip.write(byteArrayOf(0xCA.toByte(), 0xFE.toByte()))
+            zip.closeEntry()
+            for ((name, content) in entries) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(content.toByteArray())
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
+    @Test
+    fun readsFabricIdNameAndRequiredDependencies() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "fabric.mod.json" to """
+                {
+                  "schemaVersion": 1,
+                  "id": "sodium",
+                  "name": "Sodium",
+                  "version": "0.5.8",
+                  "depends": { "minecraft": "~1.21", "java": ">=21", "fabricloader": ">=0.15", "fabric-api": "*" },
+                  "suggests": { "iris": "*" }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals("sodium", metadata.modId)
+        assertEquals("Sodium", metadata.name)
+        assertEquals("0.5.8", metadata.version)
+        // minecraft/java/fabricloader come from the platform, not from a jar in the mods folder.
+        assertEquals(listOf("fabric-api"), metadata.requires)
+        assertEquals(listOf("iris"), metadata.optional)
+    }
+
+    @Test
+    fun treatsProvidedIdsAsSatisfyingDependencies() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "fabric.mod.json" to """
+                { "id": "fabric-api", "name": "Fabric API", "provides": ["fabric"], "depends": {} }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(listOf("fabric"), metadata.provides)
+        assertTrue("fabric" in metadata.ids() && "fabric-api" in metadata.ids())
+    }
+
+    @Test
+    fun readsQuiltDependenciesFromBothStringAndObjectForms() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "quilt.mod.json" to """
+                {
+                  "quilt_loader": {
+                    "id": "examplemod",
+                    "version": "1.0.0",
+                    "metadata": { "name": "Example Mod" },
+                    "depends": [
+                      "quilt_base",
+                      { "id": "quilted_fabric_api", "versions": "*" },
+                      { "id": "modmenu", "optional": true }
+                    ]
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals("examplemod", metadata.modId)
+        assertEquals("Example Mod", metadata.name)
+        assertEquals(listOf("quilted_fabric_api"), metadata.requires)
+        assertEquals(listOf("modmenu"), metadata.optional)
+    }
+
+    @Test
+    fun readsForgeMandatoryAndNeoForgeTypeDependencies() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/mods.toml" to """
+                modLoader = "javafml"
+                loaderVersion = "[47,)"
+
+                [[mods]]
+                modId = "jei"
+                version = "15.0.0"
+                displayName = "Just Enough Items"
+
+                [[dependencies.jei]]
+                    modId = "forge"
+                    mandatory = true
+                [[dependencies.jei]]
+                    modId = "curios"
+                    mandatory = false
+                [[dependencies.jei]]
+                    modId = "patchouli"   # comment should not end up in the id
+                    type = "required"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals("jei", metadata.modId)
+        assertEquals("Just Enough Items", metadata.name)
+        assertEquals(listOf("patchouli"), metadata.requires)
+        assertEquals(listOf("curios"), metadata.optional)
+    }
+
+    @Test
+    fun prefersNeoForgeManifestWhenBothArePresent() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/mods.toml" to "[[mods]]\nmodId = \"legacy\"\n",
+                "META-INF/neoforge.mods.toml" to "[[mods]]\nmodId = \"modern\"\n",
+            ),
+        )!!
+
+        assertEquals("modern", metadata.modId)
+    }
+
+    @Test
+    fun returnsNullForJarsWithoutAModManifest() {
+        assertNull(ModJarMetadataReader.read(jar()))
+        assertNull(ModJarMetadataReader.read("not a zip at all".toByteArray()))
+        // Present but unparseable is still "unknown", never "no dependencies".
+        assertNull(ModJarMetadataReader.read(jar("fabric.mod.json" to "{ broken")))
+    }
+}

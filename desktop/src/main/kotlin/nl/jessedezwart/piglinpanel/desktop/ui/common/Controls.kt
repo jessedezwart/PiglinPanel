@@ -1,6 +1,7 @@
 package nl.jessedezwart.piglinpanel.desktop.ui.common
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.ButtonColors
 import androidx.compose.material3.ButtonDefaults
@@ -39,12 +40,14 @@ fun Button(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     colors: ButtonColors = ButtonDefaults.buttonColors(),
+    contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     content: @Composable RowScope.() -> Unit,
 ) = M3Button(
     onClick = onClick,
     modifier = modifier.handCursor(enabled),
     enabled = enabled,
     colors = colors,
+    contentPadding = contentPadding,
     content = content,
 )
 
@@ -53,11 +56,13 @@ fun OutlinedButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     content: @Composable RowScope.() -> Unit,
 ) = M3OutlinedButton(
     onClick = onClick,
     modifier = modifier.handCursor(enabled),
     enabled = enabled,
+    contentPadding = contentPadding,
     content = content,
 )
 
@@ -66,11 +71,13 @@ fun TextButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
     content: @Composable RowScope.() -> Unit,
 ) = M3TextButton(
     onClick = onClick,
     modifier = modifier.handCursor(enabled),
     enabled = enabled,
+    contentPadding = contentPadding,
     content = content,
 )
 

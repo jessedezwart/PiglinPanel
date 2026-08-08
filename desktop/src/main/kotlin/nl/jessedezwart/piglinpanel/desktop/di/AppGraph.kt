@@ -15,6 +15,7 @@ import nl.jessedezwart.piglinpanel.fs.ServerFileSystemProvider
 import nl.jessedezwart.piglinpanel.logs.LogService
 import nl.jessedezwart.piglinpanel.modrinth.ModrinthClient
 import nl.jessedezwart.piglinpanel.modrinth.createHttpClient
+import nl.jessedezwart.piglinpanel.mods.ModHashStore
 import nl.jessedezwart.piglinpanel.mods.ModHasher
 import nl.jessedezwart.piglinpanel.mods.ModService
 import nl.jessedezwart.piglinpanel.nbt.QuerzNbtCodec
@@ -32,9 +33,11 @@ class AppGraph {
 
     val fileSystems: ServerFileSystemProvider = DefaultServerFileSystemProvider
 
+    private val configDir = piglinpanelConfigDir()
+
     private val configStore = AppConfigStore(
         fileSystem = FileSystem.SYSTEM,
-        configPath = piglinpanelConfigDir() / "config.json",
+        configPath = configDir / "config.json",
     )
     private val rconConfigResolver = RconConfigResolver(fileSystems)
     private val environmentResolver = ServerEnvironmentResolver(fileSystems)
@@ -50,7 +53,11 @@ class AppGraph {
     )
     private val searchSources: () -> List<ModSearchSource> = { listOf(modrinthClient, curseForgeClient) }
     val modSearchService = ModSearchService(searchSources)
-    val modService = ModService(fileSystems, modrinthClient, ModHasher(), curseForgeClient)
+    private val modHashStore = ModHashStore(
+        fileSystem = FileSystem.SYSTEM,
+        path = configDir / "mod-hashes.json",
+    )
+    val modService = ModService(fileSystems, modrinthClient, ModHasher(modHashStore), curseForgeClient)
     val modInstallService = ModInstallService(modService, searchSources)
     val fileService = FileService(fileSystems, QuerzNbtCodec())
     val logService = LogService(fileService)
