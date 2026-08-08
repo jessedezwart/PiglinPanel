@@ -23,6 +23,8 @@ data class ModrinthVersion(
     @SerialName("game_versions") val gameVersions: List<String>? = null,
     val files: List<ModrinthFile>? = null,
     @SerialName("date_published") val datePublished: String? = null,
+    @SerialName("version_type") val versionType: String? = null,
+    val dependencies: List<ModrinthDependency>? = null,
 ) {
     fun publishedAtInstant(): Instant? {
         if (datePublished.isNullOrBlank()) return null
@@ -49,4 +51,31 @@ data class ModrinthFile(
     val filename: String? = null,
     val url: String? = null,
     val primary: Boolean = false,
+)
+
+@Serializable
+data class ModrinthDependency(
+    @SerialName("version_id") val versionId: String? = null,
+    @SerialName("project_id") val projectId: String? = null,
+    @SerialName("file_name") val fileName: String? = null,
+    @SerialName("dependency_type") val dependencyType: String? = null,
+)
+
+@Serializable
+data class ModrinthSearchResponse(
+    val hits: List<ModrinthSearchHit> = emptyList(),
+    val offset: Int = 0,
+    val limit: Int = 0,
+    @SerialName("total_hits") val totalHits: Int = 0,
+)
+
+@Serializable
+data class ModrinthSearchHit(
+    @SerialName("project_id") val projectId: String? = null,
+    val slug: String? = null,
+    val title: String? = null,
+    val description: String? = null,
+    @SerialName("icon_url") val iconUrl: String? = null,
+    val author: String? = null,
+    val downloads: Long = 0,
 )

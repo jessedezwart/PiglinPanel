@@ -14,19 +14,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,9 +33,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import java.io.File
+import javax.swing.JFileChooser
 import kotlinx.coroutines.launch
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
+import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
+import nl.jessedezwart.piglinpanel.desktop.ui.common.FilterChip
+import nl.jessedezwart.piglinpanel.desktop.ui.common.IconButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.OutlinedButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
 import nl.jessedezwart.piglinpanel.model.AccessType
 import nl.jessedezwart.piglinpanel.model.ModFolder
 import nl.jessedezwart.piglinpanel.model.ServerProfile
@@ -50,38 +58,41 @@ fun ServerFormScreen(graph: AppGraph, snackbar: SnackbarHostState) {
     var editing by remember { mutableStateOf<ServerProfile?>(null) }
 
     Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        Card(Modifier.width(300.dp)) {
-            Column(Modifier.padding(12.dp)) {
-                Text("Servers", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(Modifier.padding(top = 8.dp)) {
-                    items(config.servers, key = { it.id }) { profile ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            TextButton(onClick = { editing = profile }) {
-                                Text(profile.name)
-                            }
-                            IconButton(onClick = {
-                                scope.launch {
-                                    graph.registry.delete(profile.id)
-                                    if (editing?.id == profile.id) editing = null
-                                    snackbar.showSnackbar("Deleted ${profile.name}")
+        Column(Modifier.width(300.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Card {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Server Profiles", style = MaterialTheme.typography.titleMedium)
+                    LazyColumn(Modifier.padding(top = 8.dp)) {
+                        items(config.servers, key = { it.id }) { profile ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                TextButton(onClick = { editing = profile }) {
+                                    Text(profile.displayName)
                                 }
-                            }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                IconButton(onClick = {
+                                    scope.launch {
+                                        graph.registry.delete(profile.id)
+                                        if (editing?.id == profile.id) editing = null
+                                        snackbar.showSnackbar("Deleted ${profile.displayName}")
+                                    }
+                                }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                }
                             }
                         }
                     }
-                }
-                OutlinedButton(
-                    onClick = { editing = ServerProfile() },
-                    modifier = Modifier.padding(top = 8.dp),
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Text("Add server", Modifier.padding(start = 6.dp))
+                    OutlinedButton(
+                        onClick = { editing = ServerProfile() },
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Text("Add profile", Modifier.padding(start = 6.dp))
+                    }
                 }
             }
+            IntegrationsCard(graph, config.curseforgeApiKey, snackbar)
         }
 
         editing?.let { profile ->
@@ -92,7 +103,7 @@ fun ServerFormScreen(graph: AppGraph, snackbar: SnackbarHostState) {
                     scope.launch {
                         try {
                             graph.registry.save(updated)
-                            snackbar.showSnackbar("Saved ${updated.name}")
+                            snackbar.showSnackbar("Saved ${updated.displayName}")
                         } catch (e: Exception) {
                             snackbar.showSnackbar("Save failed: ${e.message}")
                         }
@@ -105,7 +116,6 @@ fun ServerFormScreen(graph: AppGraph, snackbar: SnackbarHostState) {
 
 @Composable
 private fun ProfileForm(key: String, initial: ServerProfile, onSave: (ServerProfile) -> Unit) {
-    var name by remember(key) { mutableStateOf(initial.name) }
     var accessType by remember(key) { mutableStateOf(initial.accessType) }
     var rootPath by remember(key) { mutableStateOf(initial.rootPath) }
     var logsPath by remember(key) { mutableStateOf(initial.logsPath) }
@@ -122,7 +132,6 @@ private fun ProfileForm(key: String, initial: ServerProfile, onSave: (ServerProf
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Server profile", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
                 selected = accessType == AccessType.LOCAL,
@@ -135,8 +144,25 @@ private fun ProfileForm(key: String, initial: ServerProfile, onSave: (ServerProf
                 label = { Text("SSH") },
             )
         }
-        OutlinedTextField(rootPath, { rootPath = it }, label = { Text("Server root path") }, singleLine = true, modifier = Modifier.fillMaxWidth(0.7f))
-        OutlinedTextField(logsPath, { logsPath = it }, label = { Text("Logs path (relative)") }, singleLine = true)
+        OutlinedTextField(
+            rootPath,
+            { rootPath = it },
+            label = { Text("Server root path") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(0.7f),
+            trailingIcon = if (accessType == AccessType.LOCAL) {
+                { BrowseFolderButton({ pickDirectory(rootPath) }) { rootPath = it } }
+            } else null,
+        )
+        OutlinedTextField(
+            logsPath,
+            { logsPath = it },
+            label = { Text("Logs path (relative)") },
+            singleLine = true,
+            trailingIcon = if (accessType == AccessType.LOCAL) {
+                { BrowseFolderButton({ pickRelativeDirectory(rootPath, logsPath) }) { logsPath = it } }
+            } else null,
+        )
 
         HorizontalDivider()
         Text("Mod folders", style = MaterialTheme.typography.titleSmall)
@@ -155,6 +181,13 @@ private fun ProfileForm(key: String, initial: ServerProfile, onSave: (ServerProf
                     label = { Text("Path (relative)") },
                     singleLine = true,
                     modifier = Modifier.width(240.dp),
+                    trailingIcon = if (accessType == AccessType.LOCAL) {
+                        {
+                            BrowseFolderButton({ pickRelativeDirectory(rootPath, folder.path) }) { picked ->
+                                modFolders = modFolders.replaceAt(index) { it.copy(path = picked) }
+                            }
+                        }
+                    } else null,
                 )
                 IconButton(onClick = { modFolders = modFolders.filterIndexed { i, _ -> i != index } }) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove folder")
@@ -186,7 +219,6 @@ private fun ProfileForm(key: String, initial: ServerProfile, onSave: (ServerProf
         Button(onClick = {
             onSave(
                 initial.copy(
-                    name = name,
                     accessType = accessType,
                     rootPath = rootPath,
                     logsPath = logsPath,
@@ -209,3 +241,88 @@ private fun ProfileForm(key: String, initial: ServerProfile, onSave: (ServerProf
 
 private inline fun List<ModFolder>.replaceAt(index: Int, transform: (ModFolder) -> ModFolder): List<ModFolder> =
     mapIndexed { i, folder -> if (i == index) transform(folder) else folder }
+
+/** Trailing-icon button that opens a native directory chooser and applies the result, if any. */
+@Composable
+private fun BrowseFolderButton(pick: () -> String?, onPicked: (String) -> Unit) {
+    IconButton(onClick = { pick()?.let(onPicked) }) {
+        Icon(Icons.Default.Folder, contentDescription = "Browse for folder")
+    }
+}
+
+/** Opens a native "select directory" dialog seeded at [initialDir], returning the absolute path chosen. */
+private fun pickDirectory(initialDir: String?): String? {
+    val chooser = JFileChooser().apply {
+        fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+        isAcceptAllFileFilterUsed = false
+        dialogTitle = "Select folder"
+        if (!initialDir.isNullOrBlank()) {
+            val dir = File(initialDir)
+            if (dir.isDirectory) currentDirectory = dir
+        }
+    }
+    return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+        chooser.selectedFile.absolutePath
+    } else {
+        null
+    }
+}
+
+/**
+ * Opens a directory chooser rooted under [rootPath] and returns the chosen path relative to it
+ * (falling back to the absolute path if it falls outside the root). Used for fields — logs path,
+ * mod folder paths — that are stored relative to the server root.
+ */
+private fun pickRelativeDirectory(rootPath: String, initialRelative: String?): String? {
+    val rootDir = File(rootPath.ifBlank { "." })
+    val startDir = initialRelative?.takeIf { it.isNotBlank() }?.let { File(rootDir, it) }?.takeIf { it.isDirectory }
+    val picked = pickDirectory((startDir ?: rootDir).absolutePath) ?: return null
+    return try {
+        val relative = rootDir.toPath().relativize(File(picked).toPath())
+        if (relative.toString().startsWith("..")) picked else relative.toString().replace(File.separatorChar, '/')
+    } catch (e: IllegalArgumentException) {
+        picked
+    }
+}
+
+@Composable
+private fun IntegrationsCard(graph: AppGraph, storedKey: String, snackbar: SnackbarHostState) {
+    val scope = rememberCoroutineScope()
+    var key by remember { mutableStateOf(storedKey) }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(storedKey) { key = storedKey }
+
+    Card {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Integrations", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = { Text("CurseForge API key") },
+                singleLine = true,
+                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { visible = !visible }) {
+                        Icon(
+                            if (visible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (visible) "Hide key" else "Show key",
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "Optional — without a key, mod search only covers Modrinth. Get a key at console.curseforge.com.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(onClick = {
+                scope.launch {
+                    graph.registry.updateCurseforgeApiKey(key.trim())
+                    snackbar.showSnackbar("Saved CurseForge API key")
+                }
+            }) {
+                Text("Save")
+            }
+        }
+    }
+}

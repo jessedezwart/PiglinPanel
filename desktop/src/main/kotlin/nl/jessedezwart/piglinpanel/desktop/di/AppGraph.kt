@@ -7,6 +7,8 @@ import kotlinx.coroutines.cancel
 import nl.jessedezwart.piglinpanel.config.AppConfigStore
 import nl.jessedezwart.piglinpanel.config.ServerRegistry
 import nl.jessedezwart.piglinpanel.config.piglinpanelConfigDir
+import nl.jessedezwart.piglinpanel.curseforge.CurseForgeClient
+import nl.jessedezwart.piglinpanel.env.ServerEnvironmentResolver
 import nl.jessedezwart.piglinpanel.fs.DefaultServerFileSystemProvider
 import nl.jessedezwart.piglinpanel.fs.FileService
 import nl.jessedezwart.piglinpanel.fs.ServerFileSystemProvider
@@ -18,11 +20,13 @@ import nl.jessedezwart.piglinpanel.mods.ModService
 import nl.jessedezwart.piglinpanel.nbt.QuerzNbtCodec
 import nl.jessedezwart.piglinpanel.rcon.RconConfigResolver
 import nl.jessedezwart.piglinpanel.rcon.RconService
+import nl.jessedezwart.piglinpanel.search.ModInstallService
+import nl.jessedezwart.piglinpanel.search.ModSearchService
+import nl.jessedezwart.piglinpanel.search.ModSearchSource
 import nl.jessedezwart.piglinpanel.status.ServerStatusService
 import nl.jessedezwart.piglinpanel.sysinfo.SystemInfoService
 import okio.FileSystem
 
-/** Manual constructor wiring for the whole application; replaces the Spring context. */
 class AppGraph {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -33,13 +37,21 @@ class AppGraph {
         configPath = piglinpanelConfigDir() / "config.json",
     )
     private val rconConfigResolver = RconConfigResolver(fileSystems)
+    private val environmentResolver = ServerEnvironmentResolver(fileSystems)
 
-    val registry = ServerRegistry(configStore, rconConfigResolver)
+    val registry = ServerRegistry(configStore, rconConfigResolver, environmentResolver)
 
     private val httpClient = createHttpClient()
 
     val modrinthClient = ModrinthClient(httpClient)
+    val curseForgeClient = CurseForgeClient(
+        http = httpClient,
+        apiKey = { registry.config.value.curseforgeApiKey.takeIf { it.isNotBlank() } },
+    )
+    private val searchSources: () -> List<ModSearchSource> = { listOf(modrinthClient, curseForgeClient) }
+    val modSearchService = ModSearchService(searchSources)
     val modService = ModService(fileSystems, modrinthClient, ModHasher())
+    val modInstallService = ModInstallService(modService, searchSources)
     val fileService = FileService(fileSystems, QuerzNbtCodec())
     val logService = LogService(fileService)
     val rconService = RconService()

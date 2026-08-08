@@ -15,15 +15,12 @@ import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,17 +30,25 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
+import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
+import nl.jessedezwart.piglinpanel.desktop.ui.common.CodeEditor
+import nl.jessedezwart.piglinpanel.desktop.ui.common.IconButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.codeLangFor
+import nl.jessedezwart.piglinpanel.fs.FileContent
 import nl.jessedezwart.piglinpanel.model.FileEntry
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.nbt.NbtFiles
 
 /** Matches the old FilesController guard: NBT files above this size open read-only as a warning. */
 private const val LARGE_NBT_BYTES = 512_000L
+
+/** Above this the file is refused outright, before it is ever pulled over the wire. */
+private const val LARGE_FILE_BYTES = 8L * 1024 * 1024
 
 /** File browser with breadcrumbs, text/SNBT editing, rename and delete. Replaces files.html. */
 @Composable
@@ -73,17 +78,27 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
             openFile = null
             return
         }
-        if (NbtFiles.isNbtExtension(entry.path) && entry.size > LARGE_NBT_BYTES) {
-            editorError = "NBT file is larger than 500 KB; editing is disabled to avoid corruption."
-            openFile = entry
+        fun refuse(reason: String) {
+            editorError = reason
             editorText = ""
-            return
+            openFile = entry
+        }
+        if (NbtFiles.isNbtExtension(entry.path) && entry.size > LARGE_NBT_BYTES) {
+            return refuse("NBT file is larger than 500 KB; editing is disabled to avoid corruption.")
+        }
+        if (entry.size > LARGE_FILE_BYTES) {
+            return refuse("File is larger than 8 MB; editing is disabled.")
         }
         scope.launch {
             try {
-                editorText = graph.fileService.readText(profile, entry.path)
-                editorError = null
-                openFile = entry
+                when (val content = graph.fileService.readEditable(profile, entry.path)) {
+                    is FileContent.Binary -> refuse("${entry.name} is a binary file and cannot be edited here.")
+                    is FileContent.Text -> {
+                        editorText = content.value
+                        editorError = null
+                        openFile = entry
+                    }
+                }
             } catch (e: Exception) {
                 snackbar.showSnackbar("Could not open ${entry.name}: ${e.message}")
             }
@@ -146,11 +161,11 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
                             }
                             editorError?.let {
                                 Text(it, color = MaterialTheme.colorScheme.error)
-                            } ?: OutlinedTextField(
+                            } ?: CodeEditor(
                                 value = editorText,
                                 onValueChange = { editorText = it },
+                                language = codeLangFor(file.path),
                                 modifier = Modifier.fillMaxSize(),
-                                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                             )
                         }
                     }

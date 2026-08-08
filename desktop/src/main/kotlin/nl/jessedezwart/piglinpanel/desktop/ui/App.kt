@@ -15,14 +15,12 @@ import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -47,6 +45,9 @@ import nl.jessedezwart.piglinpanel.desktop.ui.logs.LogsScreen
 import nl.jessedezwart.piglinpanel.desktop.ui.mods.ModsScreen
 import nl.jessedezwart.piglinpanel.desktop.ui.overview.OverviewScreen
 import nl.jessedezwart.piglinpanel.desktop.ui.rcon.RconScreen
+import nl.jessedezwart.piglinpanel.desktop.ui.common.DropdownMenuItem
+import nl.jessedezwart.piglinpanel.desktop.ui.common.NavigationRailItem
+import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
 import nl.jessedezwart.piglinpanel.desktop.ui.settings.ServerFormScreen
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 
@@ -57,7 +58,7 @@ enum class Screen(val label: String, val icon: ImageVector) {
     Logs("Logs", Icons.Default.Article),
     Rcon("RCON", Icons.Default.Terminal),
     Console("Console", Icons.Default.Monitor),
-    Settings("Servers", Icons.Default.Settings),
+    Settings("Settings", Icons.Default.Settings),
 }
 
 @Composable
@@ -119,7 +120,7 @@ private fun ProfileSelector(
     Row(Modifier.fillMaxWidth()) {
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             OutlinedTextField(
-                value = selected?.name ?: "No server configured",
+                value = selected?.displayName ?: "No server configured",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Server") },
@@ -129,7 +130,7 @@ private fun ProfileSelector(
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 config.servers.forEach { profile ->
                     DropdownMenuItem(
-                        text = { Text(profile.name) },
+                        text = { Text(profile.displayName) },
                         onClick = {
                             expanded = false
                             scope.launch { graph.registry.select(profile) }
@@ -137,7 +138,7 @@ private fun ProfileSelector(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Manage servers…") },
+                    text = { Text("Manage server profiles…") },
                     onClick = {
                         expanded = false
                         onManageServers()
@@ -157,7 +158,7 @@ private fun NoServerPlaceholder(onAdd: () -> Unit) {
                 onClick = onAdd,
                 color = MaterialTheme.colorScheme.primary,
                 shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.padding(top = 12.dp),
+                modifier = Modifier.padding(top = 12.dp).handCursor(),
             ) {
                 Text(
                     "Add a server",

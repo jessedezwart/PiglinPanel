@@ -12,6 +12,7 @@ import kotlinx.serialization.Serializable
 data class AppConfig(
     val servers: List<ServerProfile> = emptyList(),
     val selectedServerId: String? = null,
+    val curseforgeApiKey: String = "",
 )
 
 @Serializable
@@ -24,15 +25,31 @@ enum class AccessType {
 @Serializable
 data class ServerProfile(
     val id: String = Uuid.random().toString(),
-    val name: String = "Minecraft Server",
     val accessType: AccessType = AccessType.LOCAL,
     val rootPath: String = "",
     val logsPath: String = "logs",
     val modFolders: List<ModFolder> = listOf(ModFolder("mods", "mods", "mods")),
     val ssh: SshConfig = SshConfig(),
     val rcon: RconConfig = RconConfig(),
+    /** Detected Minecraft version, e.g. "1.21.1". Null when unknown; never auto-cleared. */
+    val mcVersion: String? = null,
+    /** Detected mod loader: "fabric" | "forge" | "neoforge" | "quilt". Null when unknown. */
+    val modLoader: String? = null,
 ) {
-    override fun toString(): String = name
+    /**
+     * Label shown wherever a profile is listed: `host:/root/path` for SSH profiles, the plain root
+     * path for local ones. Profiles have no user-set name — the path identifies them.
+     */
+    val displayName: String
+        get() {
+            val path = rootPath.ifBlank { "(no path)" }
+            return when (accessType) {
+                AccessType.LOCAL -> path
+                AccessType.SSH -> ssh.host.ifBlank { "(no host)" } + ":" + path
+            }
+        }
+
+    override fun toString(): String = displayName
 }
 
 @Serializable

@@ -13,11 +13,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
+import nl.jessedezwart.piglinpanel.desktop.ui.common.FilterChip
+import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
 import nl.jessedezwart.piglinpanel.logs.LogFilter
 import nl.jessedezwart.piglinpanel.model.FileEntry
 import nl.jessedezwart.piglinpanel.model.ServerProfile
@@ -45,7 +45,7 @@ fun LogsScreen(graph: AppGraph, profile: ServerProfile) {
 
     val logFiles by produceState<List<FileEntry>>(emptyList(), profile.id) {
         value = try {
-            graph.logService.logFiles(profile).filterNot { it.directory }
+            graph.logService.logFiles(profile).filterNot { it.directory }.sortedByDescending { it.name }
         } catch (e: IOException) {
             emptyList()
         }

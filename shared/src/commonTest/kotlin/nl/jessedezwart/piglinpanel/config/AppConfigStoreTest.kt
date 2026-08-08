@@ -15,14 +15,14 @@ class AppConfigStoreTest {
 
     @Test
     fun savesAndLoadsServerProfiles() {
-        val profile = ServerProfile(name = "Test server", rootPath = "C:/server")
+        val profile = ServerProfile(rootPath = "C:/server")
         val config = AppConfig(servers = listOf(profile), selectedServerId = profile.id)
 
         store.save(config)
         val loaded = store.load()
 
         assertEquals(1, loaded.servers.size)
-        assertEquals("Test server", loaded.servers.first().name)
+        assertEquals("C:/server", loaded.servers.first().rootPath)
         assertEquals(profile.id, loaded.selectedServerId)
     }
 
@@ -76,8 +76,9 @@ class AppConfigStoreTest {
         val loaded = store.load()
 
         val server = loaded.servers.single()
-        assertEquals("Survival", server.name)
+        // The legacy "name" field is dropped — profiles are now identified by host/path.
         assertEquals(AccessType.SSH, server.accessType)
+        assertEquals("mc.example.com:/opt/minecraft", server.displayName)
         assertEquals("/opt/minecraft", server.rootPath)
         assertEquals("mods", server.modFolders.single().path)
         assertEquals(2222, server.ssh.port)

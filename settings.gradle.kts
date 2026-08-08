@@ -20,6 +20,7 @@ dependencyResolutionManagement {
             }
             filter {
                 includeGroup("com.github.Querz")
+                includeGroup("com.github.Qawaz.compose-code-editor")
             }
         }
     }

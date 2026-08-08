@@ -23,7 +23,7 @@ fun main() = application {
     val graph = remember {
         AppGraph().also { g ->
             LoggerFactory.getLogger("PiglinPanel").info("Piglin Panel starting")
-            g.scope.launch { g.registry.refreshSelectedRcon() }
+            g.scope.launch { g.registry.refreshSelected() }
             // Mod icons come from Modrinth over HTTP; Coil needs the Ktor fetcher registered.
             coil3.SingletonImageLoader.setSafe { context ->
                 coil3.ImageLoader.Builder(context)

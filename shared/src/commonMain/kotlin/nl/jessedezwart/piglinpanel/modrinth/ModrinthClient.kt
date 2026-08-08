@@ -14,6 +14,12 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import nl.jessedezwart.piglinpanel.cache.SuspendCache
 import nl.jessedezwart.piglinpanel.model.ModUpdate
+import nl.jessedezwart.piglinpanel.search.ModDependency
+import nl.jessedezwart.piglinpanel.search.ModSearchHit
+import nl.jessedezwart.piglinpanel.search.ModSearchPage
+import nl.jessedezwart.piglinpanel.search.ModSearchSource
+import nl.jessedezwart.piglinpanel.search.ModSource
+import nl.jessedezwart.piglinpanel.search.ModVersionInfo
 import okio.IOException
 
 class ModrinthHttpException(val statusCode: Int, uri: String) :
@@ -22,7 +28,7 @@ class ModrinthHttpException(val statusCode: Int, uri: String) :
 class ModrinthClient(
     private val http: HttpClient,
     private val apiBaseUrl: String = API_BASE_URL,
-) : ModUpdateSource {
+) : ModUpdateSource, ModSearchSource {
     companion object {
         const val API_BASE_URL = "https://api.modrinth.com/v2"
         const val USER_AGENT = "Piglinpanel/0.1"
@@ -115,7 +121,7 @@ class ModrinthClient(
         if (update.projectId == null || update.latestVersionId == null) {
             throw IOException("No download metadata is available for update $update")
         }
-        val version = version(update.projectId, update.latestVersionId)
+        val version = fetchVersion(update.projectId, update.latestVersionId)
         val file = version.fileByName(update.fileName)
             ?: version.primaryFile()
             ?: throw IOException("No downloadable file found for Modrinth version ${update.latestVersionId}")
@@ -125,7 +131,112 @@ class ModrinthClient(
         return download(file.url)
     }
 
-    private suspend fun version(projectId: String, versionId: String): ModrinthVersion {
+    override val source: ModSource = ModSource.MODRINTH
+
+    /** Modrinth's public API needs no key. */
+    override val available: Boolean = true
+
+    override suspend fun search(
+        query: String,
+        loader: String?,
+        mcVersion: String?,
+        offset: Int,
+        limit: Int,
+    ): ModSearchPage {
+        val facets = json.encodeToString(searchFacets(loader, mcVersion))
+        val uri = "$apiBaseUrl/search?" + queryString(
+            "query" to query,
+            "facets" to facets,
+            "offset" to offset.toString(),
+            "limit" to limit.toString(),
+        )
+        val response = get(uri)
+        requireSuccess(response, uri)
+        val result = json.decodeFromString<ModrinthSearchResponse>(response.bodyText())
+        return ModSearchPage(
+            hits = result.hits.mapNotNull { hit ->
+                val projectId = hit.projectId ?: return@mapNotNull null
+                ModSearchHit(
+                    source = ModSource.MODRINTH,
+                    projectId = projectId,
+                    title = hit.title?.takeIf { it.isNotBlank() } ?: hit.slug ?: projectId,
+                    description = hit.description.orEmpty(),
+                    iconUrl = hit.iconUrl,
+                    author = hit.author,
+                    downloads = hit.downloads,
+                )
+            },
+            totalHits = result.totalHits,
+            offset = result.offset,
+        )
+    }
+
+    override suspend fun latestCompatibleVersion(
+        projectId: String,
+        loader: String?,
+        mcVersion: String?,
+    ): ModVersionInfo? {
+        val query = queryString(
+            "loaders" to loader?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
+            "game_versions" to mcVersion?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
+        )
+        val uri = "$apiBaseUrl/project/${projectId.encodeURLParameter()}/version" + query.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
+        val response = get(uri)
+        requireSuccess(response, uri)
+        val versions = json.decodeFromString<List<ModrinthVersion>>(response.bodyText())
+        val best = versions
+            .filter { it.primaryFile() != null }
+            .sortedWith(
+                compareByDescending<ModrinthVersion> { it.versionType == "release" }
+                    .thenByDescending { it.publishedAtInstant()?.toEpochMilliseconds() ?: 0L },
+            )
+            .firstOrNull()
+        return best?.let { toVersionInfo(projectId, it) }
+    }
+
+    override suspend fun version(projectId: String, versionId: String): ModVersionInfo? = try {
+        toVersionInfo(projectId, fetchVersion(projectId, versionId))
+    } catch (e: ModrinthHttpException) {
+        null
+    }
+
+    override suspend fun downloadFile(version: ModVersionInfo): ByteArray = download(version.downloadUrl)
+
+    private fun toVersionInfo(projectId: String, version: ModrinthVersion): ModVersionInfo? {
+        val versionId = version.id ?: return null
+        val file = version.primaryFile() ?: return null
+        val fileName = file.filename ?: return null
+        val url = file.url ?: return null
+        return ModVersionInfo(
+            source = ModSource.MODRINTH,
+            projectId = projectId,
+            versionId = versionId,
+            versionName = version.name,
+            fileName = fileName,
+            downloadUrl = url,
+            dependencies = version.dependencies.orEmpty().mapNotNull { dep ->
+                val depProjectId = dep.projectId ?: return@mapNotNull null
+                if (dep.dependencyType != "required" && dep.dependencyType != "optional") return@mapNotNull null
+                ModDependency(
+                    source = ModSource.MODRINTH,
+                    projectId = depProjectId,
+                    versionId = dep.versionId,
+                    required = dep.dependencyType == "required",
+                )
+            },
+        )
+    }
+
+    private fun searchFacets(loader: String?, mcVersion: String?): List<List<String>> = buildList {
+        add(listOf("project_type:mod"))
+        loader?.takeIf { it.isNotBlank() }?.let { add(listOf("categories:$it")) }
+        mcVersion?.takeIf { it.isNotBlank() }?.let { add(listOf("versions:$it")) }
+    }
+
+    private fun queryString(vararg params: Pair<String, String?>): String =
+        params.filter { it.second != null }.joinToString("&") { (key, value) -> "$key=${value!!.encodeURLParameter()}" }
+
+    private suspend fun fetchVersion(projectId: String, versionId: String): ModrinthVersion {
         val uri = "$apiBaseUrl/project/${projectId.encodeURLParameter()}/version/${versionId.encodeURLParameter()}"
         val response = get(uri)
         requireSuccess(response, uri)

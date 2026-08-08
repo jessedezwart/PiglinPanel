@@ -2,17 +2,19 @@ package nl.jessedezwart.piglinpanel.config
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import nl.jessedezwart.piglinpanel.env.ServerEnvironmentResolver
 import nl.jessedezwart.piglinpanel.model.AppConfig
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.rcon.RconConfigResolver
 
 /**
  * Holds the live [AppConfig] and persists every mutation. Selecting or saving a profile refreshes
- * its RCON settings from the server's server.properties when reachable.
+ * its RCON settings and detected mod loader/Minecraft version from the server when reachable.
  */
 class ServerRegistry(
     private val store: AppConfigStore,
     private val rconConfigResolver: RconConfigResolver,
+    private val environmentResolver: ServerEnvironmentResolver,
 ) {
     private val _config = MutableStateFlow(store.load())
     val config: StateFlow<AppConfig> = _config
@@ -20,11 +22,27 @@ class ServerRegistry(
     val servers: List<ServerProfile>
         get() = _config.value.servers
 
-    /** Refreshes the selected profile's RCON config on startup, mirroring the old constructor. */
-    suspend fun refreshSelectedRcon() {
+    /** Refreshes the selected profile's RCON config and detected environment on startup. */
+    suspend fun refreshSelected() {
         val selected = selected() ?: return
-        val refreshed = rconConfigResolver.refresh(selected) ?: return
+        val refreshed = refresh(selected) ?: return
         replaceProfile(refreshed)
+    }
+
+    /** Re-runs mod loader/Minecraft version detection for [profile] and persists the result. */
+    suspend fun detectEnvironment(profile: ServerProfile): ServerProfile {
+        val refreshed = environmentResolver.refresh(profile) ?: profile
+        replaceProfile(refreshed)
+        return refreshed
+    }
+
+    suspend fun updateCurseforgeApiKey(key: String) {
+        update { it.copy(curseforgeApiKey = key) }
+    }
+
+    private suspend fun refresh(profile: ServerProfile): ServerProfile? {
+        val withRcon = rconConfigResolver.refresh(profile) ?: profile
+        return environmentResolver.refresh(withRcon) ?: withRcon
     }
 
     fun resolve(serverId: String?): ServerProfile? {
@@ -43,7 +61,7 @@ class ServerRegistry(
     }
 
     suspend fun select(profile: ServerProfile?) {
-        val refreshed = profile?.let { rconConfigResolver.refresh(it) ?: it }
+        val refreshed = profile?.let { refresh(it) ?: it }
         if (refreshed != null) {
             replaceProfileInList(refreshed)
         }
@@ -52,7 +70,7 @@ class ServerRegistry(
 
     suspend fun save(profile: ServerProfile) {
         require(profile.id.isNotBlank()) { "Server id is required" }
-        val refreshed = rconConfigResolver.refresh(profile) ?: profile
+        val refreshed = refresh(profile) ?: profile
         update { config ->
             val servers = config.servers.toMutableList()
             val index = servers.indexOfFirst { it.id == refreshed.id }

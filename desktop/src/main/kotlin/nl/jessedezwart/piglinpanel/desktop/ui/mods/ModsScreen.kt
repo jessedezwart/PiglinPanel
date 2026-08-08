@@ -1,6 +1,7 @@
 package nl.jessedezwart.piglinpanel.desktop.ui.mods
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,14 +10,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,52 +27,164 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
+import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
+import nl.jessedezwart.piglinpanel.desktop.ui.common.OutlinedButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.Tab
+import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModGroup
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.mods.ScanProgress
 
-/** Mod management: scan with progress, updates, enable/disable/delete. Replaces mods.html. */
+/** A mod mutation: runs [block], then rescans (checking updates when [checkUpdatesAfter]). */
+private typealias Mutation = (label: String, checkUpdatesAfter: Boolean, block: suspend () -> Unit) -> Unit
+
+/** Mod management: installed mods (scan, update, enable/disable/delete) and mod discovery/install. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostState) {
     val scope = rememberCoroutineScope()
+    var tab by remember(profile.id) { mutableStateOf(0) }
     var groups by remember(profile.id) { mutableStateOf<List<ModGroup>>(emptyList()) }
     var progress by remember(profile.id) { mutableStateOf<ScanProgress?>(null) }
-    var scanning by remember(profile.id) { mutableStateOf(false) }
 
-    fun rescan(checkUpdates: Boolean, forceRefresh: Boolean = false) {
-        if (scanning) return
-        scanning = true
+    /** Label of the running operation, or null when idle. All controls are disabled while set. */
+    var task by remember(profile.id) { mutableStateOf<String?>(null) }
+    val busy = task != null
+
+    // Snackbars suspend until dismissed, so they are always shown off the task coroutine —
+    // otherwise the UI would stay disabled for the lifetime of the message.
+    fun notify(message: String) {
+        scope.launch { snackbar.showSnackbar(message) }
+    }
+
+    suspend fun scan(checkUpdates: Boolean, forceRefresh: Boolean) {
         progress = null
+        val mods = graph.modService.scan(profile, checkUpdates, forceRefresh) { p -> progress = p }
+        groups = graph.modService.group(mods)
+    }
+
+    /** Runs [block] as the single active operation, keeping the UI disabled until it finishes. */
+    fun launchTask(label: String, block: suspend () -> Unit) {
+        if (busy) return
+        task = label
         scope.launch {
             try {
-                val mods = graph.modService.scan(profile, checkUpdates, forceRefresh) { p ->
-                    progress = p
-                }
-                groups = graph.modService.group(mods)
+                block()
             } catch (e: Exception) {
-                snackbar.showSnackbar("Scan failed: ${e.message}")
+                notify("$label failed: ${e.message}")
             } finally {
-                scanning = false
                 progress = null
+                task = null
             }
         }
     }
 
+    fun rescan(checkUpdates: Boolean, forceRefresh: Boolean = false) {
+        launchTask("Scan") { scan(checkUpdates, forceRefresh) }
+    }
+
+    val mutate: Mutation = { label, checkUpdatesAfter, block ->
+        launchTask(label) {
+            block()
+            scan(checkUpdatesAfter, false)
+        }
+    }
+
+    fun updateAll(targets: List<Pair<ModGroup, ModFile>>) {
+        if (targets.isEmpty()) return
+        launchTask("Update all") {
+            var updated = 0
+            val failures = mutableListOf<String>()
+            targets.forEachIndexed { index, (group, mod) ->
+                progress = ScanProgress("updating", index, targets.size, group.displayName)
+                try {
+                    graph.modService.applyUpdate(profile, mod)
+                    updated++
+                } catch (e: Exception) {
+                    failures += group.displayName
+                }
+            }
+            progress = null
+            notify(
+                if (failures.isEmpty()) {
+                    "Updated $updated mod(s)"
+                } else {
+                    "Updated $updated mod(s); ${failures.size} failed: ${failures.joinToString()}"
+                },
+            )
+            scan(checkUpdates = true, forceRefresh = false)
+        }
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        PrimaryTabRow(selectedTabIndex = tab) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Installed") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Browse") })
+        }
+        Box(Modifier.fillMaxSize().padding(top = 12.dp)) {
+            when (tab) {
+                0 -> InstalledModsTab(
+                    graph = graph,
+                    profile = profile,
+                    groups = groups,
+                    progress = progress,
+                    task = task,
+                    rescan = ::rescan,
+                    updateAll = ::updateAll,
+                    mutate = mutate,
+                    notify = ::notify,
+                )
+                else -> BrowseModsTab(
+                    graph = graph,
+                    profile = profile,
+                    snackbar = snackbar,
+                    onInstalled = { rescan(checkUpdates = true) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InstalledModsTab(
+    graph: AppGraph,
+    profile: ServerProfile,
+    groups: List<ModGroup>,
+    progress: ScanProgress?,
+    task: String?,
+    rescan: (checkUpdates: Boolean, forceRefresh: Boolean) -> Unit,
+    updateAll: (List<Pair<ModGroup, ModFile>>) -> Unit,
+    mutate: Mutation,
+    notify: (String) -> Unit,
+) {
+    val busy = task != null
+    val updatable = remember(groups) {
+        groups.mapNotNull { group ->
+            val active = group.active ?: return@mapNotNull null
+            if (group.update?.available() == true) group to active else null
+        }
+    }
+    val canUpdateAll = !busy && updatable.isNotEmpty()
+
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { rescan(checkUpdates = true) }, enabled = !scanning) {
-                Text(if (scanning) "Scanning…" else "Scan & check updates")
+            Button(onClick = { rescan(true, false) }, enabled = !busy) {
+                Text(if (task == "Scan") "Scanning…" else "Scan & check updates")
             }
-            OutlinedButton(onClick = { rescan(checkUpdates = true, forceRefresh = true) }, enabled = !scanning) {
+            Button(onClick = { updateAll(updatable) }, enabled = canUpdateAll) {
+                Text(if (updatable.isEmpty()) "Update all" else "Update all (${updatable.size})")
+            }
+            OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
                 Text("Force refresh")
             }
-            OutlinedButton(onClick = { rescan(checkUpdates = false) }, enabled = !scanning) {
+            OutlinedButton(onClick = { rescan(false, false) }, enabled = !busy) {
                 Text("Quick scan")
+            }
+            if (busy && task != "Scan") {
+                Text("$task…", style = MaterialTheme.typography.bodySmall)
             }
         }
         progress?.let { p ->
@@ -80,6 +192,7 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
                 Text(
                     when (p.phase) {
                         "hashing" -> "Hashing ${p.done}/${p.total}: ${p.fileName ?: ""}"
+                        "updating" -> "Updating ${p.done + 1}/${p.total}: ${p.fileName ?: ""}"
                         else -> "Looking up updates for ${p.total} mods…"
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -90,53 +203,30 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
                 )
             }
         }
-        if (groups.isEmpty() && !scanning) {
+        if (groups.isEmpty() && !busy) {
             Text("No mods scanned yet. Run a scan to list mods.", style = MaterialTheme.typography.bodyMedium)
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(groups, key = { it.key }) { group ->
                 ModGroupCard(
                     group = group,
+                    enabled = !busy,
                     onApplyUpdate = { mod ->
-                        scope.launch {
-                            try {
-                                graph.modService.applyUpdate(profile, mod)
-                                snackbar.showSnackbar("Updated ${group.displayName}")
-                                rescan(checkUpdates = true)
-                            } catch (e: Exception) {
-                                snackbar.showSnackbar("Update failed: ${e.message}")
-                            }
+                        mutate("Update", true) {
+                            graph.modService.applyUpdate(profile, mod)
+                            notify("Updated ${group.displayName}")
                         }
                     },
                     onDisable = { mod ->
-                        scope.launch {
-                            try {
-                                graph.modService.disablePath(profile, mod.relativePath)
-                                rescan(checkUpdates = false)
-                            } catch (e: Exception) {
-                                snackbar.showSnackbar("Disable failed: ${e.message}")
-                            }
-                        }
+                        mutate("Disable", false) { graph.modService.disablePath(profile, mod.relativePath) }
                     },
                     onActivate = { mod ->
-                        scope.launch {
-                            try {
-                                graph.modService.activate(profile, mod.relativePath, group.active?.relativePath)
-                                rescan(checkUpdates = false)
-                            } catch (e: Exception) {
-                                snackbar.showSnackbar("Activate failed: ${e.message}")
-                            }
+                        mutate("Activate", false) {
+                            graph.modService.activate(profile, mod.relativePath, group.active?.relativePath)
                         }
                     },
                     onDelete = { mod ->
-                        scope.launch {
-                            try {
-                                graph.modService.delete(profile, mod)
-                                rescan(checkUpdates = false)
-                            } catch (e: Exception) {
-                                snackbar.showSnackbar("Delete failed: ${e.message}")
-                            }
-                        }
+                        mutate("Delete", false) { graph.modService.delete(profile, mod) }
                     },
                 )
             }
@@ -147,6 +237,7 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
 @Composable
 private fun ModGroupCard(
     group: ModGroup,
+    enabled: Boolean,
     onApplyUpdate: (ModFile) -> Unit,
     onDisable: (ModFile) -> Unit,
     onActivate: (ModFile) -> Unit,
@@ -171,13 +262,13 @@ private fun ModGroupCard(
                 }
                 val update = group.update
                 if (update != null && update.available()) {
-                    Button(onClick = { group.active?.let(onApplyUpdate) }) {
+                    Button(onClick = { group.active?.let(onApplyUpdate) }, enabled = enabled) {
                         Text("Update to ${update.latestVersionName ?: update.latestVersionId}")
                     }
                 }
                 group.active?.let { active ->
-                    OutlinedButton(onClick = { onDisable(active) }) { Text("Disable") }
-                    TextButton(onClick = { onDelete(active) }) { Text("Delete") }
+                    OutlinedButton(onClick = { onDisable(active) }, enabled = enabled) { Text("Disable") }
+                    TextButton(onClick = { onDelete(active) }, enabled = enabled) { Text("Delete") }
                 }
             }
             if (group.hasArchived()) {
@@ -185,8 +276,8 @@ private fun ModGroupCard(
                     group.archived.forEach { archived ->
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(archived.fileName, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                            TextButton(onClick = { onActivate(archived) }) { Text("Activate") }
-                            TextButton(onClick = { onDelete(archived) }) { Text("Delete") }
+                            TextButton(onClick = { onActivate(archived) }, enabled = enabled) { Text("Activate") }
+                            TextButton(onClick = { onDelete(archived) }, enabled = enabled) { Text("Delete") }
                         }
                     }
                 }

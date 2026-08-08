@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import nl.jessedezwart.piglinpanel.model.ModUpdate
+import nl.jessedezwart.piglinpanel.search.ModSource
 
 class ModrinthClientTest {
     private fun requestBodyJson(request: HttpRequestData) =
@@ -133,5 +134,62 @@ class ModrinthClientTest {
 
         // Unknown hash: absent entirely.
         assertTrue("hash-unknown" !in updates)
+    }
+
+    @Test
+    fun searchEncodesFacetsForLoaderAndGameVersion() = runTest {
+        var capturedQuery: String? = null
+        val engine = MockEngine { request ->
+            capturedQuery = request.url.encodedQuery
+            respond(
+                """
+                {
+                  "hits": [ {"project_id":"p1","title":"Sodium","description":"Optimization mod","icon_url":"http://localhost/icon.png","author":"jellysquid","downloads":5000000} ],
+                  "offset": 0,
+                  "limit": 20,
+                  "total_hits": 1
+                }
+                """.trimIndent(),
+                HttpStatusCode.OK,
+            )
+        }
+        val client = ModrinthClient(HttpClient(engine), "http://localhost/v2")
+
+        val page = client.search("sodium", loader = "fabric", mcVersion = "1.21.1", offset = 0, limit = 20)
+
+        assertTrue(capturedQuery!!.contains("categories%3Afabric") || capturedQuery!!.contains("categories:fabric"))
+        assertTrue(capturedQuery!!.contains("versions%3A1.21.1") || capturedQuery!!.contains("versions:1.21.1"))
+        assertEquals(1, page.hits.size)
+        assertEquals("Sodium", page.hits.first().title)
+        assertEquals(ModSource.MODRINTH, page.hits.first().source)
+        assertEquals(1, page.totalHits)
+    }
+
+    @Test
+    fun latestCompatibleVersionPrefersReleaseOverBeta() = runTest {
+        val engine = MockEngine { request ->
+            when {
+                request.url.fullPath.startsWith("/v2/project/p1/version") -> respond(
+                    """
+                    [
+                      {"id":"beta1","project_id":"p1","name":"Beta","loaders":["fabric"],"game_versions":["1.21.1"],"files":[{"filename":"beta.jar","url":"http://localhost/beta.jar","primary":true}],"date_published":"2026-07-01T00:00:00Z","version_type":"beta"},
+                      {"id":"rel1","project_id":"p1","name":"Release","loaders":["fabric"],"game_versions":["1.21.1"],"files":[{"filename":"rel.jar","url":"http://localhost/rel.jar","primary":true}],"date_published":"2026-06-01T00:00:00Z","version_type":"release","dependencies":[{"project_id":"dep1","dependency_type":"required"}]}
+                    ]
+                    """.trimIndent(),
+                    HttpStatusCode.OK,
+                )
+                else -> respond("unexpected ${request.url}", HttpStatusCode.InternalServerError)
+            }
+        }
+        val client = ModrinthClient(HttpClient(engine), "http://localhost/v2")
+
+        val version = client.latestCompatibleVersion("p1", loader = "fabric", mcVersion = "1.21.1")
+
+        requireNotNull(version)
+        assertEquals("rel1", version.versionId)
+        assertEquals("rel.jar", version.fileName)
+        assertEquals(1, version.dependencies.size)
+        assertEquals("dep1", version.dependencies.first().projectId)
+        assertTrue(version.dependencies.first().required)
     }
 }
