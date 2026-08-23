@@ -22,8 +22,13 @@ class ModHashStore(
     private val path: Path,
 ) {
     private companion object {
-        /** Bumped whenever the key format or either hash algorithm changes, to discard stale files. */
-        const val FORMAT_VERSION = 3
+        /**
+         * Bumped whenever the key format, either hash algorithm, or what is read out of a jar
+         * changes, to discard stale files. Version 4 reads the ids of bundled jar-in-jar mods,
+         * which entries written before it lack — leaving them cached would keep reporting
+         * dependencies as missing that are in fact present.
+         */
+        const val FORMAT_VERSION = 4
     }
 
     @Serializable

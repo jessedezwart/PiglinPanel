@@ -25,7 +25,8 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(libs.ktor.client.cio)
-            implementation(libs.jsch)
+            implementation(libs.sshj)
+            implementation(libs.java.keyring)
             implementation(libs.querz.nbt)
             implementation(libs.slf4j.api)
         }

@@ -1,15 +1,9 @@
 package nl.jessedezwart.piglinpanel.desktop
 
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
@@ -34,27 +28,12 @@ fun main() = application {
             }
         }
     }
-    var windowVisible by remember { mutableStateOf(true) }
-
-    Tray(
-        icon = remember { ColorPainter(Color(0xFFE0A040)) },
-        tooltip = "Piglin Panel",
-        onAction = { windowVisible = true },
-        menu = {
-            Item("Open", onClick = { windowVisible = true })
-            Item(
-                "Exit",
-                onClick = {
-                    graph.shutdown()
-                    exitApplication()
-                },
-            )
-        },
-    )
 
     Window(
-        onCloseRequest = { windowVisible = false },
-        visible = windowVisible,
+        onCloseRequest = {
+            graph.shutdown()
+            exitApplication()
+        },
         title = "Piglin Panel",
         state = rememberWindowState(size = DpSize(1280.dp, 800.dp)),
     ) {

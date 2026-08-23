@@ -194,26 +194,21 @@ class ModService(
                 update = active?.update,
                 requiredBy = active?.let { graph.dependentsOf(it).map(::displayName).distinct() }.orEmpty(),
                 missingDependencies = active?.let(graph::missingDependenciesOf).orEmpty(),
+                disabledDependencies = active
+                    ?.let { graph.disabledDependenciesOf(it).map(::displayName) }
+                    .orEmpty()
+                    .distinct(),
             )
         }
     }
 
     /**
-     * Enables the disabled jars [target] needs in order to load, resolved transitively. Returns the
-     * files it enabled, which is empty when everything it needs is already enabled — or when the
-     * missing pieces are not installed at all, since those need downloading rather than a rename.
+     * The disabled jars [target] needs in order to load, resolved transitively. Reported rather
+     * than acted on: enabling a jar on the user's behalf changes what the server loads, and the
+     * point of the dependency check is to tell them, not to decide for them.
      */
-    suspend fun enableRequiredDependencies(
-        profile: ServerProfile,
-        mods: List<ModFile>,
-        target: ModFile,
-    ): List<ModFile> {
-        val needed = ModDependencyGraph.of(mods).disabledDependenciesOf(target)
-        for (dependency in needed) {
-            enablePath(profile, dependency.relativePath)
-        }
-        return needed
-    }
+    fun disabledDependenciesOf(mods: List<ModFile>, target: ModFile): List<ModFile> =
+        ModDependencyGraph.of(mods).disabledDependenciesOf(target)
 
     /** The enabled mods that would lose a required dependency if [target] were disabled or deleted. */
     fun dependentsBrokenBy(mods: List<ModFile>, target: ModFile): List<String> =

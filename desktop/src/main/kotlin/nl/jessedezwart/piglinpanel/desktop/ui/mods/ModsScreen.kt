@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,11 +23,14 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateSetOf
@@ -36,7 +40,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -55,11 +63,15 @@ import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_TEXT_BUTTON_PADDING
 import nl.jessedezwart.piglinpanel.desktop.ui.common.SUB_ROW_HEIGHT
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Tab
 import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.TriStateCheckbox
 import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModGroup
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.mods.ScanProgress
+
+/** The size Material always draws a checkbox at, regardless of the size it is laid out in. */
+private val CHECKBOX_DRAW_SIZE = 20.dp
 
 /** A pending disable/delete that other installed mods depend on, held until the user confirms it. */
 private data class Breakage(
@@ -128,9 +140,9 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
         }
     }
 
-    fun updateAll(targets: List<Pair<ModGroup, ModFile>>) {
+    fun applyUpdates(targets: List<Pair<ModGroup, ModFile>>) {
         if (targets.isEmpty()) return
-        launchTask("Update all") {
+        launchTask("Update") {
             var updated = 0
             val failures = mutableListOf<String>()
             targets.forEachIndexed { index, (group, mod) ->
@@ -158,6 +170,7 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
         PrimaryTabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Installed") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Browse") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Compatibility") })
         }
         Box(Modifier.fillMaxSize().padding(top = 6.dp)) {
             when (tab) {
@@ -169,15 +182,22 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
                     progress = progress,
                     task = task,
                     rescan = ::rescan,
-                    updateAll = ::updateAll,
+                    applyUpdates = ::applyUpdates,
                     mutate = mutate,
                     notify = ::notify,
                 )
-                else -> BrowseModsTab(
+                1 -> BrowseModsTab(
                     graph = graph,
                     profile = profile,
                     snackbar = snackbar,
                     onInstalled = { rescan(checkUpdates = true) },
+                )
+                // Reads the same scan the Installed tab shows, so a check needs no second scan.
+                else -> CompatibilityTab(
+                    graph = graph,
+                    profile = profile,
+                    groups = groups,
+                    snackbar = snackbar,
                 )
             }
         }
@@ -193,7 +213,7 @@ private fun InstalledModsTab(
     progress: ScanProgress?,
     task: String?,
     rescan: (checkUpdates: Boolean, forceRefresh: Boolean) -> Unit,
-    updateAll: (List<Pair<ModGroup, ModFile>>) -> Unit,
+    applyUpdates: (List<Pair<ModGroup, ModFile>>) -> Unit,
     mutate: Mutation,
     notify: (String) -> Unit,
 ) {
@@ -227,7 +247,17 @@ private fun InstalledModsTab(
             if (group.update?.available() == true) group to active else null
         }
     }
-    val canUpdateAll = !busy && updatable.isNotEmpty()
+    val updatableKeys = remember(updatable) { updatable.map { it.first.key }.toSet() }
+
+    /** Mods ticked for a targeted update. Empty means "all of them", so the button always works. */
+    val selected = remember(profile.id) { mutableStateSetOf<String>() }
+
+    // A mod that was updated (or vanished) is no longer a target, so it drops out of the selection
+    // instead of quietly counting towards the next update.
+    LaunchedEffect(updatableKeys) { selected.retainAll(updatableKeys) }
+
+    val targets = if (selected.isEmpty()) updatable else updatable.filter { it.first.key in selected }
+    val canUpdate = !busy && targets.isNotEmpty()
 
     breakage?.let { pending ->
         AlertDialog(
@@ -262,8 +292,30 @@ private fun InstalledModsTab(
             Button(onClick = { rescan(true, false) }, enabled = !busy) {
                 Text(if (task == "Scan") "Scanning…" else "Scan & check updates")
             }
-            Button(onClick = { updateAll(updatable) }, enabled = canUpdateAll) {
-                Text(if (updatable.isEmpty()) "Update all" else "Update all (${updatable.size})")
+            if (updatable.isNotEmpty()) {
+                RowCheckbox(
+                    state = when (selected.size) {
+                        0 -> ToggleableState.Off
+                        updatable.size -> ToggleableState.On
+                        else -> ToggleableState.Indeterminate
+                    },
+                    enabled = !busy,
+                    contentDescription = "Select all updatable mods",
+                    onClick = {
+                        val all = selected.size == updatable.size
+                        selected.clear()
+                        if (!all) selected.addAll(updatableKeys)
+                    },
+                )
+            }
+            Button(onClick = { applyUpdates(targets) }, enabled = canUpdate) {
+                Text(
+                    when {
+                        updatable.isEmpty() -> "Update all"
+                        selected.isEmpty() -> "Update all (${updatable.size})"
+                        else -> "Update selected (${selected.size})"
+                    },
+                )
             }
             OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
                 Text("Force refresh")
@@ -313,6 +365,10 @@ private fun InstalledModsTab(
                 ModGroupRow(
                     group = group,
                     enabled = !busy,
+                    selected = group.key in selected,
+                    onToggleSelected = {
+                        if (!selected.add(group.key)) selected.remove(group.key)
+                    },
                     // A group with nothing enabled shows all it can offer in its children, so the
                     // filtered list unfolds itself rather than making every row a second click.
                     expanded = disabledOnly || group.key in expanded,
@@ -337,11 +393,11 @@ private fun InstalledModsTab(
                     onActivate = { mod ->
                         mutate("Activate", true) {
                             graph.modService.activate(profile, mod.relativePath, group.active?.relativePath)
-                            // Enabling a version is pointless if what it needs stays disabled, so the
-                            // dependencies come along with it.
-                            val pulled = graph.modService.enableRequiredDependencies(profile, mods, mod)
-                            if (pulled.isNotEmpty()) {
-                                notify("Also enabled ${pulled.size} dependency(s): ${pulled.joinToString { it.fileName }}")
+                            // Dependencies that are installed but still disabled are pointed out
+                            // rather than enabled: what the server loads stays the user's call.
+                            val needed = graph.modService.disabledDependenciesOf(mods, mod)
+                            if (needed.isNotEmpty()) {
+                                notify("Still disabled: ${needed.joinToString { it.fileName }}")
                             }
                         }
                     },
@@ -364,6 +420,8 @@ private fun InstalledModsTab(
 private fun ModGroupRow(
     group: ModGroup,
     enabled: Boolean,
+    selected: Boolean,
+    onToggleSelected: () -> Unit,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
     onApplyUpdate: (ModFile) -> Unit,
@@ -442,9 +500,26 @@ private fun ModGroupRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+                if (group.disabledDependencies.isNotEmpty()) {
+                    Text(
+                        "disabled ${group.disabledDependencies.joinToString(", ")}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             val update = group.update
             if (update != null && update.available()) {
+                // Only a mod with an update to apply can be ticked, so the checkbox rides along
+                // with its update button rather than adding a column every other row leaves blank.
+                RowCheckbox(
+                    state = ToggleableState(selected),
+                    enabled = enabled,
+                    contentDescription = "Select ${group.displayName} for update",
+                    onClick = onToggleSelected,
+                )
                 Button(
                     onClick = { group.active?.let(onApplyUpdate) },
                     modifier = Modifier.height(ROW_BUTTON_HEIGHT),
@@ -506,6 +581,30 @@ private fun ModGroupRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * A checkbox sized to fit inside a dense row. Material draws it at a fixed 20dp and reserves a 48dp
+ * touch target around that, so the target is dropped and the whole control scaled down to [ROW_ICON].
+ */
+@Composable
+private fun RowCheckbox(
+    state: ToggleableState,
+    enabled: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+        TriStateCheckbox(
+            state = state,
+            onClick = onClick,
+            modifier = Modifier
+                .requiredSize(ROW_ICON)
+                .scale(ROW_ICON / CHECKBOX_DRAW_SIZE)
+                .semantics { this.contentDescription = contentDescription },
+            enabled = enabled,
+        )
     }
 }
 

@@ -1,5 +1,7 @@
 package nl.jessedezwart.piglinpanel.search
 
+import kotlin.time.Instant
+
 /** Which mod repository a search hit or install originated from. */
 enum class ModSource { MODRINTH, CURSEFORGE }
 
@@ -49,3 +51,10 @@ data class InstallResult(
     val skipped: List<String>,
     val failures: List<String>,
 )
+
+/**
+ * A Minecraft version as the repositories know it. [release] separates the versions people actually
+ * run from snapshots, pre-releases and release candidates; [releasedAt] is what "newer" is decided
+ * on, so nothing has to parse a Minecraft version string.
+ */
+data class GameVersion(val version: String, val release: Boolean, val releasedAt: Instant? = null)

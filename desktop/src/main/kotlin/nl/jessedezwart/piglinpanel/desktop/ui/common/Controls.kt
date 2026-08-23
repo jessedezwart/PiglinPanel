@@ -14,14 +14,17 @@ import androidx.compose.material3.MenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.material3.Button as M3Button
 import androidx.compose.material3.DropdownMenuItem as M3DropdownMenuItem
 import androidx.compose.material3.FilterChip as M3FilterChip
 import androidx.compose.material3.IconButton as M3IconButton
 import androidx.compose.material3.NavigationRailItem as M3NavigationRailItem
 import androidx.compose.material3.OutlinedButton as M3OutlinedButton
+import androidx.compose.material3.Switch as M3Switch
 import androidx.compose.material3.Tab as M3Tab
 import androidx.compose.material3.TextButton as M3TextButton
+import androidx.compose.material3.TriStateCheckbox as M3TriStateCheckbox
 
 /**
  * Material 3 controls with the desktop hand cursor baked in.
@@ -97,6 +100,19 @@ fun IconButton(
 )
 
 @Composable
+fun TriStateCheckbox(
+    state: ToggleableState,
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) = M3TriStateCheckbox(
+    state = state,
+    onClick = onClick,
+    modifier = modifier.handCursor(enabled),
+    enabled = enabled,
+)
+
+@Composable
 fun FilterChip(
     selected: Boolean,
     onClick: () -> Unit,
@@ -111,6 +127,19 @@ fun FilterChip(
     modifier = modifier.handCursor(enabled),
     enabled = enabled,
     leadingIcon = leadingIcon,
+)
+
+@Composable
+fun Switch(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) = M3Switch(
+    checked = checked,
+    onCheckedChange = onCheckedChange,
+    modifier = modifier.handCursor(enabled),
+    enabled = enabled,
 )
 
 @Composable

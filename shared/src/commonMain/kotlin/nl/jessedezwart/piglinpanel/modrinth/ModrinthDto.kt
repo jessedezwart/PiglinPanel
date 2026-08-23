@@ -79,3 +79,19 @@ data class ModrinthSearchHit(
     val author: String? = null,
     val downloads: Long = 0,
 )
+
+@Serializable
+data class ModrinthGameVersion(
+    val version: String,
+    @SerialName("version_type") val versionType: String? = null,
+    val date: String? = null,
+) {
+    fun releasedAtInstant(): Instant? {
+        if (date.isNullOrBlank()) return null
+        return try {
+            Instant.parse(date)
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
+}

@@ -59,13 +59,51 @@ object ModJarMetadataReader {
         "mcp",
     )
 
+    /**
+     * How deep to look for bundled jars. Mods ship their libraries inside themselves (Fabric's
+     * `META-INF/jars`, NeoForge's `META-INF/jarjar`), and those libraries can bundle jars of their
+     * own — the `fabric` modules inside Forgified Fabric API sit one level further down. Two levels
+     * covers what is seen in practice without turning a scan into a full archive walk.
+     */
+    private const val MAX_NESTING = 2
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    fun read(jarBytes: ByteArray): ModJarMetadata? =
+    /**
+     * The ids a jar answers to include the ones it bundles: a dependency that ships inside another
+     * mod's jar is present as far as the loader is concerned, so reporting it missing would be a
+     * lie — and the commonest one, since libraries are usually shipped this way.
+     */
+    fun read(jarBytes: ByteArray): ModJarMetadata? {
+        val declared = readDeclared(jarBytes) ?: return null
+        val known = declared.ids().toMutableSet()
+        val bundled = bundledIds(jarBytes, MAX_NESTING).filter { known.add(it) }
+        return if (bundled.isEmpty()) declared else declared.copy(provides = declared.provides + bundled)
+    }
+
+    private fun readDeclared(jarBytes: ByteArray): ModJarMetadata? =
         readZipEntry(jarBytes, "fabric.mod.json")?.let(::parseFabric)
             ?: readZipEntry(jarBytes, "quilt.mod.json")?.let(::parseQuilt)
             ?: readZipEntry(jarBytes, "META-INF/neoforge.mods.toml")?.let(::parseModsToml)
             ?: readZipEntry(jarBytes, "META-INF/mods.toml")?.let(::parseModsToml)
+
+    /**
+     * Ids declared by the jars bundled inside [jarBytes], recursively. What those jars themselves
+     * require is deliberately ignored: a bundled jar travels with whatever it needs.
+     */
+    private fun bundledIds(jarBytes: ByteArray, depth: Int): List<String> {
+        if (depth <= 0) return emptyList()
+        return readZipEntries(jarBytes, ::isBundledJar)
+            .flatMap { nested -> readDeclared(nested)?.ids().orEmpty() + bundledIds(nested, depth - 1) }
+            .distinct()
+    }
+
+    private fun isBundledJar(entryName: String): Boolean =
+        entryName.endsWith(".jar", ignoreCase = true) &&
+            (
+                entryName.startsWith("META-INF/jars/", ignoreCase = true) ||
+                    entryName.startsWith("META-INF/jarjar/", ignoreCase = true)
+                )
 
     private fun ByteArray.text(): String = decodeToString()
 
@@ -140,7 +178,9 @@ object ModJarMetadataReader {
      * key/value pairs, and a mis-parse here would cost a spurious warning, not a broken server.
      */
     private fun parseModsToml(bytes: ByteArray): ModJarMetadata? {
-        var modId: String? = null
+        // One jar may declare several `[[mods]]`; the loader registers every one of them, so the
+        // extras become ids this jar provides rather than being dropped.
+        val modIds = mutableListOf<String>()
         var name: String? = null
         var version: String? = null
         val required = mutableListOf<String>()
@@ -176,7 +216,7 @@ object ModJarMetadataReader {
             val value = line.substringAfter('=').trim().trim('"', '\'')
 
             when {
-                inMods && key == "modid" && modId == null -> modId = value
+                inMods && key == "modid" -> modIds += value
                 inMods && key == "displayname" && name == null -> name = value
                 inMods && key == "version" && version == null -> version = value
                 inDependencies && key == "modid" -> {
@@ -190,13 +230,17 @@ object ModJarMetadataReader {
         }
         flushDependency()
 
-        val id = modId ?: return null
+        val ids = sanitize(modIds)
+        val id = ids.firstOrNull() ?: return null
         return ModJarMetadata(
-            modId = id.lowercase(),
+            modId = id,
             name = name,
             version = version,
-            requires = sanitize(required),
-            optional = sanitize(optional),
+            provides = ids.drop(1),
+            // A jar declaring several mods also declares their dependencies on each other; those
+            // are satisfied from within, so they are not requirements of the jar as a whole.
+            requires = sanitize(required) - ids.toSet(),
+            optional = sanitize(optional) - ids.toSet(),
         )
     }
 }

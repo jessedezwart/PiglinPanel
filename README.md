@@ -3,17 +3,35 @@
 A desktop panel for managing Minecraft servers — local or remote over SSH.
 
 - **Overview**: online status, host hardware specs, live CPU/memory metrics
-- **Mods**: scan mod folders, match against Modrinth, one-click updates, enable/disable/archive versions
+- **Mods**: scan mod folders, match against Modrinth, one-click updates, enable/disable/archive versions,
+  and check the pack against another Minecraft version before moving to it
 - **Files**: browse and edit server files, including NBT ⇄ SNBT editing
 - **Logs**: view, filter, and live-tail server logs
 - **RCON**: send commands to the running server
+- **Start**: launch a remote server from the panel, with the command you already use
 - **Console**: the panel's own log stream
 
 Built with Kotlin Multiplatform: the domain logic lives in the `shared` module
 (kotlinx.serialization, Ktor client, okio, coroutines — portable to future targets), and the UI is
 Compose Multiplatform for Desktop in the `desktop` module. Configuration is stored at
 `%APPDATA%\Piglinpanel\config.json` (Windows) or `~/.config/piglinpanel` (Linux/macOS), in the same
-format as previous releases.
+format as previous releases. Credentials — SSH passwords and key passphrases, RCON passwords, API
+keys — are not in that file: they live in the operating system's own credential store (Windows
+Credential Manager, macOS Keychain, Secret Service on Linux) under "Piglin Panel", and config.json
+holds only a `keyring:v1:` reference. Values written by earlier releases are read as they were and
+move into the store on the next save; machines with no credential store fall back to AES-GCM under a
+`secret.key` file in the same folder.
+
+SSH profiles with no key path and no password fall back to the default identities in `~/.ssh`, so a
+host that already works with `ssh` needs no credentials stored here at all. Host keys are checked
+against `~/.ssh/known_hosts` the way OpenSSH's `StrictHostKeyChecking=accept-new` does: an unknown
+host is trusted once and pinned, and a host whose key has since changed is refused.
+
+A server reached over SSH can be started from the Overview tab once its profile carries a start
+command. A plain command such as `./start.sh` is wrapped so it keeps running after the SSH
+connection closes, with its startup output captured in `piglinpanel-start.log` next to it; a command
+that already detaches — `screen -dmS`, `tmux new -d`, `systemctl start`, `docker start` — is run as
+typed, which is what the "runs the server in the background itself" switch selects.
 
 ## Development
 

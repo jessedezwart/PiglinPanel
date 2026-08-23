@@ -31,6 +31,7 @@ data class ServerProfile(
     val modFolders: List<ModFolder> = listOf(ModFolder("mods", "mods", "mods")),
     val ssh: SshConfig = SshConfig(),
     val rcon: RconConfig = RconConfig(),
+    val start: StartConfig = StartConfig(),
     /** Detected Minecraft version, e.g. "1.21.1". Null when unknown; never auto-cleared. */
     val mcVersion: String? = null,
     /** Detected mod loader: "fabric" | "forge" | "neoforge" | "quilt". Null when unknown. */
@@ -61,6 +62,24 @@ data class ModFolder(
     val displayName: String
         get() = name.ifBlank { path }
 }
+
+/**
+ * How the server process is launched. Only SSH profiles can be started from the panel; a local
+ * server would need its own detachment handling, which Windows and Unix do not share.
+ */
+@Serializable
+data class StartConfig(
+    /** Shell command that starts the server, e.g. `./start.sh`. Blank means starting is off. */
+    val command: String = "",
+    /** Where to run it: blank means the server root; a relative path resolves against the root. */
+    val workingDirectory: String = "",
+    /**
+     * True when [command] detaches the process itself — `screen -dmS`, `tmux new -d`,
+     * `systemctl start`, `docker start`. Those run as typed; anything else is wrapped so the server
+     * survives the SSH session ending.
+     */
+    val selfDetaching: Boolean = false,
+)
 
 @Serializable
 data class SshConfig(

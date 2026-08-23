@@ -45,6 +45,9 @@ class CurseForgeClient(
 
         /** The "Mods" class id within the Minecraft game. */
         private const val MOD_CLASS_ID = "6"
+
+        /** How many of a project's files one listing reads. */
+        private const val FILE_PAGE_SIZE = 50
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -99,16 +102,29 @@ class CurseForgeClient(
         mcVersion: String?,
     ): ModVersionInfo? = latestFile(projectId, loader, mcVersion)?.let { toVersionInfo(projectId, it) }
 
-    private suspend fun latestFile(projectId: String, loader: String?, mcVersion: String?): CurseForgeFile? {
+    /**
+     * The Minecraft versions among a project's recent files. CurseForge mixes loader names into the
+     * same list, so anything not starting with a digit is dropped; only the newest [FILE_PAGE_SIZE]
+     * files are read, which covers the versions a mod is still being published for.
+     */
+    override suspend fun supportedGameVersions(projectId: String, loader: String?): Set<String> =
+        files(projectId, loader, mcVersion = null)
+            .filter { !it.downloadUrl.isNullOrBlank() }
+            .flatMap { it.gameVersions }
+            .filterTo(LinkedHashSet()) { it.firstOrNull()?.isDigit() == true }
+
+    private suspend fun latestFile(projectId: String, loader: String?, mcVersion: String?): CurseForgeFile? =
+        bestFile(files(projectId, loader, mcVersion), loader = null, mcVersion = null)
+
+    private suspend fun files(projectId: String, loader: String?, mcVersion: String?): List<CurseForgeFile> {
         val uri = "$apiBaseUrl/mods/${projectId.encodeURLParameter()}/files?" + queryString(
             "modLoaderType" to CurseForgeLoaderType.fromName(loader)?.toString(),
             "gameVersion" to mcVersion?.takeIf { it.isNotBlank() },
-            "pageSize" to "50",
+            "pageSize" to FILE_PAGE_SIZE.toString(),
         )
         val response = get(uri)
         requireSuccess(response, uri)
-        val result = json.decodeFromString<CurseForgeFilesResponse>(response.bodyText())
-        return bestFile(result.data, loader = null, mcVersion = null)
+        return json.decodeFromString<CurseForgeFilesResponse>(response.bodyText()).data
     }
 
     /**

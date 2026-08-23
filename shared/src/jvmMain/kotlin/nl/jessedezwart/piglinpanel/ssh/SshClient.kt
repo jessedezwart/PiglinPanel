@@ -1,40 +1,69 @@
 package nl.jessedezwart.piglinpanel.ssh
 
-import com.jcraft.jsch.ChannelExec
-import com.jcraft.jsch.JSch
-import com.jcraft.jsch.JSchException
-import com.jcraft.jsch.Session
-import java.io.ByteArrayOutputStream
-import java.util.Properties
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.schmizz.sshj.SSHClient
+import net.schmizz.sshj.common.IOUtils
+import net.schmizz.sshj.connection.channel.direct.Session
+import net.schmizz.sshj.userauth.UserAuthException
 import nl.jessedezwart.piglinpanel.model.ServerProfile
+import nl.jessedezwart.piglinpanel.model.SshConfig
 import okio.IOException
 
-class SshClient private constructor(private val session: Session) : AutoCloseable {
+/**
+ * A connected SSH session, used to run commands on a remote server.
+ *
+ * Host keys are checked against `~/.ssh/known_hosts` with the same trust-on-first-use rule as
+ * OpenSSH's `StrictHostKeyChecking=accept-new` — see [AcceptNewHostKeyVerifier].
+ */
+class SshClient private constructor(private val ssh: SSHClient) : AutoCloseable {
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000
 
         suspend fun connect(profile: ServerProfile): SshClient = withContext(Dispatchers.IO) {
-            val config = profile.ssh
+            val ssh = SSHClient()
             try {
-                val jsch = JSch()
-                if (config.privateKeyPath.isNotBlank()) {
-                    if (config.privateKeyPassphrase.isBlank()) {
-                        jsch.addIdentity(config.privateKeyPath)
+                ssh.addHostKeyVerifier(AcceptNewHostKeyVerifier())
+                ssh.connectTimeout = CONNECT_TIMEOUT_MS
+                ssh.connect(profile.ssh.host, profile.ssh.port)
+                authenticate(ssh, profile.ssh)
+                SshClient(ssh)
+            } catch (e: java.io.IOException) {
+                ssh.closeQuietly()
+                throw IOException(e.message?.let { "Could not connect over SSH: $it" } ?: "Could not connect over SSH", e)
+            }
+        }
+
+        /**
+         * Picks a single authentication method: an explicit key file, else a password, else the
+         * default identities in `~/.ssh` — the same keys `ssh host` would offer. Keys that cannot
+         * be read or parsed are skipped by sshj rather than failing the connection.
+         */
+        private fun authenticate(ssh: SSHClient, config: SshConfig) {
+            val passphrase = config.privateKeyPassphrase.takeIf { it.isNotBlank() }
+            when {
+                config.privateKeyPath.isNotBlank() -> {
+                    val location = SshIdentities.expandHome(config.privateKeyPath)
+                    val keys = if (passphrase == null) {
+                        ssh.loadKeys(location)
                     } else {
-                        jsch.addIdentity(config.privateKeyPath, config.privateKeyPassphrase)
+                        ssh.loadKeys(location, passphrase.toCharArray())
                     }
+                    ssh.authPublickey(config.username, keys)
                 }
-                val session = jsch.getSession(config.username, config.host, config.port)
-                if (config.password.isNotBlank()) {
-                    session.setPassword(config.password)
+
+                config.password.isNotBlank() -> ssh.authPassword(config.username, config.password)
+
+                else -> {
+                    val defaults = SshIdentities.defaultKeys()
+                    if (defaults.isEmpty()) {
+                        throw UserAuthException(
+                            "No password set and no private keys in ${SshIdentities.sshDirectory()}",
+                        )
+                    }
+                    ssh.authPublickey(config.username, *defaults.map { it.path }.toTypedArray())
                 }
-                session.setConfig(Properties().apply { put("StrictHostKeyChecking", "no") })
-                session.connect(CONNECT_TIMEOUT_MS)
-                SshClient(session)
-            } catch (e: JSchException) {
-                throw IOException("Could not connect over SSH", e)
             }
         }
     }
@@ -53,57 +82,49 @@ class SshClient private constructor(private val session: Session) : AutoCloseabl
     }
 
     suspend fun exec(command: String): CommandResult = withContext(Dispatchers.IO) {
-        try {
-            val channel = session.openChannel("exec") as ChannelExec
-            channel.setCommand(command)
-            val stdout = ByteArrayOutputStream()
-            val stderr = ByteArrayOutputStream()
-            channel.outputStream = stdout
-            channel.setErrStream(stderr)
-            channel.connect()
-            while (!channel.isClosed) {
-                Thread.sleep(20)
-            }
-            val exit = channel.exitStatus
-            channel.disconnect()
-            CommandResult(exit, stdout.toByteArray(), stderr.toByteArray())
-        } catch (e: JSchException) {
-            throw IOException("SSH command failed", e)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw IOException("SSH command interrupted", e)
-        }
+        runCommand(command) { }
     }
 
     /** Runs [command] feeding [bytes] to its stdin; throws with stderr text on non-zero exit. */
-    suspend fun writeToCommand(command: String, bytes: ByteArray): Unit =
-        withContext(Dispatchers.IO) {
-            try {
-                val channel = session.openChannel("exec") as ChannelExec
-                channel.setCommand(command)
-                val stderr = ByteArrayOutputStream()
-                channel.setErrStream(stderr)
-                channel.connect()
-                channel.outputStream.use { it.write(bytes) }
-                while (!channel.isClosed) {
-                    Thread.sleep(20)
-                }
-                val exit = channel.exitStatus
-                channel.disconnect()
-                if (exit != 0) {
-                    throw IOException(stderr.toByteArray().decodeToString())
-                }
-            } catch (e: JSchException) {
-                throw IOException("SSH write command failed", e)
-            } catch (e: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw IOException("SSH write command interrupted", e)
-            }
+    suspend fun writeToCommand(command: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
+        val result = runCommand(command) { it.outputStream.use { stdin -> stdin.write(bytes) } }
+        if (result.exitCode != 0) {
+            throw IOException(result.stderrText().ifBlank { "Remote command failed with exit ${result.exitCode}" })
         }
+    }
+
+    /**
+     * Each command gets its own SSH session — the protocol allows only one command per session —
+     * and [feedStdin] runs before the output is drained so a writer does not deadlock against a
+     * full pipe.
+     */
+    private fun runCommand(command: String, feedStdin: (Session.Command) -> Unit): CommandResult = try {
+        ssh.startSession().use { session ->
+            val remote = session.exec(command)
+            feedStdin(remote)
+            val stdout = IOUtils.readFully(remote.inputStream).toByteArray()
+            val stderr = IOUtils.readFully(remote.errorStream).toByteArray()
+            remote.join(COMMAND_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            // The exit status only arrives with the channel close message.
+            remote.close()
+            CommandResult(remote.exitStatus ?: -1, stdout, stderr)
+        }
+    } catch (e: java.io.IOException) {
+        throw IOException(e.message ?: "SSH command failed", e)
+    }
 
     override fun close() {
-        if (session.isConnected) {
-            session.disconnect()
-        }
+        ssh.closeQuietly()
+    }
+}
+
+private const val COMMAND_TIMEOUT_SECONDS = 60L
+
+/** Disconnects without letting a failing teardown mask the error that caused it. */
+private fun SSHClient.closeQuietly() {
+    try {
+        if (isConnected) disconnect()
+    } catch (e: java.io.IOException) {
+        // Already gone; nothing left to release.
     }
 }

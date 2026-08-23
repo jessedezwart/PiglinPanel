@@ -4,4 +4,4 @@ Kotlin Multiplatform project: portable logic in `shared` (commonMain; JVM-only c
 - Tests: `./gradlew :shared:jvmTest`
 - Package: `./gradlew :desktop:createDistributable` (app image) or `:desktop:packageMsi` (requires WiX Toolset).
 - Prefer constructor injection wired in `desktop/.../di/AppGraph.kt`; no DI framework.
-- New domain logic goes in `shared/commonMain` unless it needs JVM-only APIs (ProcessBuilder, jsch, AWT, Querz NBT).
+- New domain logic goes in `shared/commonMain` unless it needs JVM-only APIs (ProcessBuilder, sshj, AWT, Querz NBT).

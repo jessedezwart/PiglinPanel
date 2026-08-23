@@ -17,6 +17,7 @@ dependencies {
     implementation(compose.materialIconsExtended)
     implementation(libs.kotlinx.coroutines.swing)
     implementation(libs.code.editor)
+    implementation(libs.filekit.dialogs.compose)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.ktor3)
     implementation(libs.ktor.client.cio)

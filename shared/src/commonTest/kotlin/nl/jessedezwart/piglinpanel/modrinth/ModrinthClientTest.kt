@@ -192,4 +192,35 @@ class ModrinthClientTest {
         assertEquals("dep1", version.dependencies.first().projectId)
         assertTrue(version.dependencies.first().required)
     }
+
+    @Test
+    fun readsGameVersionsOnceAndMarksReleases() = runTest {
+        var calls = 0
+        val engine = MockEngine { request ->
+            when (request.url.fullPath) {
+                "/v2/tag/game_version" -> {
+                    calls++
+                    respond(
+                        """
+                        [
+                          {"version":"25w05a","version_type":"snapshot"},
+                          {"version":"1.21.4","version_type":"release"},
+                          {"version":"1.21.4-rc1","version_type":"beta"}
+                        ]
+                        """.trimIndent(),
+                        HttpStatusCode.OK,
+                    )
+                }
+                else -> respond("unexpected ${request.url}", HttpStatusCode.InternalServerError)
+            }
+        }
+        val client = ModrinthClient(HttpClient(engine), "http://localhost/v2")
+
+        val versions = client.gameVersions()
+        client.gameVersions()
+
+        assertEquals(listOf("25w05a", "1.21.4", "1.21.4-rc1"), versions.map { it.version })
+        assertEquals(listOf("1.21.4"), versions.filter { it.release }.map { it.version })
+        assertEquals(1, calls)
+    }
 }

@@ -48,7 +48,7 @@ import nl.jessedezwart.piglinpanel.desktop.ui.rcon.RconScreen
 import nl.jessedezwart.piglinpanel.desktop.ui.common.DropdownMenuItem
 import nl.jessedezwart.piglinpanel.desktop.ui.common.NavigationRailItem
 import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
-import nl.jessedezwart.piglinpanel.desktop.ui.settings.ServerFormScreen
+import nl.jessedezwart.piglinpanel.desktop.ui.settings.SettingsScreen
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 
 enum class Screen(val label: String, val icon: ImageVector) {
@@ -85,7 +85,7 @@ fun App(graph: AppGraph) {
                 ProfileSelector(graph, selected, onManageServers = { screen = Screen.Settings })
                 Box(Modifier.fillMaxSize().padding(top = 12.dp)) {
                     when (screen) {
-                        Screen.Settings -> ServerFormScreen(graph, snackbar)
+                        Screen.Settings -> SettingsScreen(graph, snackbar)
                         else -> if (selected == null) {
                             NoServerPlaceholder(onAdd = { screen = Screen.Settings })
                         } else {

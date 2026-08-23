@@ -36,6 +36,11 @@ data class ModGroup(
     val requiredBy: List<String> = emptyList(),
     /** Required mod ids that no enabled jar provides — this mod will not load as things stand. */
     val missingDependencies: List<String> = emptyList(),
+    /**
+     * Names of dependencies that are installed but disabled. Separate from [missingDependencies]
+     * because the fix is a click, not a download — but still the user's click to make.
+     */
+    val disabledDependencies: List<String> = emptyList(),
 )
 
 data class ModUpdate(

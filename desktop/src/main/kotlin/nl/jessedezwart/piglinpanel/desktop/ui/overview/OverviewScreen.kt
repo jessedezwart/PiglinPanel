@@ -17,15 +17,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import nl.jessedezwart.piglinpanel.control.ServerStartCommand
+import nl.jessedezwart.piglinpanel.control.StartResult
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
+import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.status.ServerStatus
 import nl.jessedezwart.piglinpanel.sysinfo.Metrics
@@ -50,14 +60,17 @@ fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
         }
     }
 
+    val scope = rememberCoroutineScope()
+    val starter = remember(profile.id) { ServerStarter(graph, profile, scope) }
+
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val online = status?.online == true
+                val online = status?.online == true
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.foundation.layout.Box(
                         Modifier.size(12.dp)
                             .clip(CircleShape)
@@ -65,11 +78,29 @@ fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
                     )
                     Text(
                         if (online) "Online" else "Offline",
-                        Modifier.padding(start = 8.dp),
+                        Modifier.padding(start = 8.dp).weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                     )
+                    Button(
+                        onClick = starter::start,
+                        enabled = !online && !starter.busy && starter.unavailable == null,
+                    ) {
+                        Text(if (starter.busy) "Starting…" else "Start server")
+                    }
                 }
                 status?.let { Text("${it.host}:${it.port}", style = MaterialTheme.typography.bodySmall) }
+                val note = starter.error ?: starter.unavailable?.takeIf { !online }
+                note?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (starter.error != null) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
         }
 
@@ -113,6 +144,59 @@ fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Drives the Start button: runs the start command, then waits for the server port to open, because
+ * a start command returning successfully only means the JVM launched, not that anyone can join yet.
+ */
+private class ServerStarter(
+    private val graph: AppGraph,
+    private val profile: ServerProfile,
+    private val scope: CoroutineScope,
+) {
+    var busy by mutableStateOf(false)
+        private set
+
+    var error by mutableStateOf<String?>(null)
+        private set
+
+    /** Why the button is disabled, or null when the server can be started. */
+    val unavailable: String?
+        get() = graph.serverControlService.unavailableReason(profile)
+
+    fun start() {
+        if (busy) return
+        scope.launch {
+            busy = true
+            error = null
+            try {
+                when (val result = graph.serverControlService.start(profile)) {
+                    is StartResult.Failed -> error = result.message
+                    StartResult.Started -> awaitOnline()
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    private suspend fun awaitOnline() {
+        val opened = withTimeoutOrNull(ONLINE_TIMEOUT_MILLIS) {
+            while (!graph.statusService.statusFor(profile).online) {
+                delay(3_000)
+            }
+            true
+        }
+        if (opened == null) {
+            error = "The server started but its port is still closed after two minutes." +
+                " Its output is in ${ServerStartCommand.LOG_FILE}, in the server folder."
+        }
+    }
+
+    private companion object {
+        const val ONLINE_TIMEOUT_MILLIS = 120_000L
     }
 }
 

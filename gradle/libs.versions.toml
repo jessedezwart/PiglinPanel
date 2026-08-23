@@ -5,12 +5,14 @@ ktor = "3.5.1"
 coroutines = "1.11.0"
 serialization = "1.11.0"
 okio = "3.17.0"
-jsch = "0.2.25"
+sshj = "0.40.0"
 querz-nbt = "6.1"
 slf4j = "2.0.17"
 logback = "1.5.18"
 coil = "3.5.0"
 code-editor = "3.1.1"
+filekit = "0.15.0"
+java-keyring = "1.0.4"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -24,13 +26,15 @@ ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx
 ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 okio-fakefilesystem = { module = "com.squareup.okio:okio-fakefilesystem", version.ref = "okio" }
-jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
+sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
+java-keyring = { module = "com.github.javakeyring:java-keyring", version.ref = "java-keyring" }
 querz-nbt = { module = "com.github.Querz:NBT", version.ref = "querz-nbt" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-ktor3 = { module = "io.coil-kt.coil3:coil-network-ktor3", version.ref = "coil" }
 code-editor = { module = "com.github.Qawaz.compose-code-editor:codeeditor", version.ref = "code-editor" }
+filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose", version.ref = "filekit" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }

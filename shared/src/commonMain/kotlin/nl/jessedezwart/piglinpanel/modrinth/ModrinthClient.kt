@@ -10,10 +10,13 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import nl.jessedezwart.piglinpanel.cache.SuspendCache
 import nl.jessedezwart.piglinpanel.model.ModUpdate
+import nl.jessedezwart.piglinpanel.search.BulkCompatibilitySource
+import nl.jessedezwart.piglinpanel.search.GameVersion
 import nl.jessedezwart.piglinpanel.search.ModDependency
 import nl.jessedezwart.piglinpanel.search.ModSearchHit
 import nl.jessedezwart.piglinpanel.search.ModSearchPage
@@ -28,15 +31,38 @@ class ModrinthHttpException(val statusCode: Int, uri: String) :
 class ModrinthClient(
     private val http: HttpClient,
     private val apiBaseUrl: String = API_BASE_URL,
-) : ModUpdateSource, ModSearchSource {
+) : ModUpdateSource, ModSearchSource, BulkCompatibilitySource {
     companion object {
         const val API_BASE_URL = "https://api.modrinth.com/v2"
         const val USER_AGENT = "Piglinpanel/0.1"
+
+        private const val GAME_VERSIONS_KEY = "game_versions"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
     private val projectsCache =
         SuspendCache<String, Map<String, ModrinthProject>>(ttl = 24.hours, maxEntries = 50)
+    private val gameVersionsCache = SuspendCache<String, List<GameVersion>>(ttl = 24.hours, maxEntries = 1)
+
+    /**
+     * The Minecraft versions Modrinth indexes, newest first. Cached for a day: the list only grows
+     * when Mojang ships something, and every screen that offers a version picker asks for it.
+     */
+    suspend fun gameVersions(): List<GameVersion> = gameVersionsCache.getOrPut(GAME_VERSIONS_KEY) {
+        val uri = "$apiBaseUrl/tag/game_version"
+        val response = get(uri)
+        requireSuccess(response, uri)
+        json.decodeFromString<List<ModrinthGameVersion>>(response.bodyText())
+            .map {
+                GameVersion(
+                    version = it.version,
+                    release = it.versionType == "release",
+                    releasedAt = it.releasedAtInstant(),
+                )
+            }
+            // Sorted here rather than trusted from the API, so every caller can rely on "newest first".
+            .sortedByDescending { it.releasedAt ?: Instant.DISTANT_PAST }
+    }
 
     suspend fun findSuggestedUpdate(sha1: String): ModUpdate? =
         findSuggestedUpdates(listOf(sha1))[sha1]
@@ -176,15 +202,7 @@ class ModrinthClient(
         loader: String?,
         mcVersion: String?,
     ): ModVersionInfo? {
-        val query = queryString(
-            "loaders" to loader?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
-            "game_versions" to mcVersion?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
-        )
-        val uri = "$apiBaseUrl/project/${projectId.encodeURLParameter()}/version" + query.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
-        val response = get(uri)
-        requireSuccess(response, uri)
-        val versions = json.decodeFromString<List<ModrinthVersion>>(response.bodyText())
-        val best = versions
+        val best = projectVersions(projectId, loader, mcVersion)
             .filter { it.primaryFile() != null }
             .sortedWith(
                 compareByDescending<ModrinthVersion> { it.versionType == "release" }
@@ -192,6 +210,56 @@ class ModrinthClient(
             )
             .firstOrNull()
         return best?.let { toVersionInfo(projectId, it) }
+    }
+
+    override suspend fun supportedGameVersions(projectId: String, loader: String?): Set<String> =
+        projectVersions(projectId, loader, mcVersion = null)
+            .filter { it.primaryFile() != null }
+            .flatMapTo(LinkedHashSet()) { it.gameVersions.orEmpty() }
+
+    /** A project's versions, narrowed by the repository to [loader] and [mcVersion] where given. */
+    private suspend fun projectVersions(
+        projectId: String,
+        loader: String?,
+        mcVersion: String?,
+    ): List<ModrinthVersion> {
+        val query = queryString(
+            "loaders" to loader?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
+            "game_versions" to mcVersion?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
+        )
+        val uri = "$apiBaseUrl/project/${projectId.encodeURLParameter()}/version" +
+            query.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
+        val response = get(uri)
+        requireSuccess(response, uri)
+        return json.decodeFromString(response.bodyText())
+    }
+
+    /**
+     * One request for the whole pack: Modrinth's update endpoint already answers "newest version
+     * matching these loaders and game versions" per hash, so a hash it leaves out has no version for
+     * the target (or is not a Modrinth file at all).
+     */
+    override suspend fun findCompatibleVersions(
+        sha1s: List<String>,
+        loader: String?,
+        gameVersion: String,
+    ): Map<String, ModVersionInfo> {
+        val hashes = sha1s.filter { it.isNotBlank() }.distinct()
+        if (hashes.isEmpty()) {
+            return emptyMap()
+        }
+        val versions = latestVersionsForHashes(
+            sha1s = hashes,
+            loaders = listOfNotNull(loader?.takeIf { it.isNotBlank() }),
+            gameVersions = listOf(gameVersion),
+        )
+        val compatible = LinkedHashMap<String, ModVersionInfo>()
+        for ((hash, version) in versions) {
+            val projectId = version.projectId ?: continue
+            val info = toVersionInfo(projectId, version) ?: continue
+            compatible[hash] = info
+        }
+        return compatible
     }
 
     override suspend fun version(projectId: String, versionId: String): ModVersionInfo? = try {

@@ -4,9 +4,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import nl.jessedezwart.piglinpanel.config.AesSecretCodec
 import nl.jessedezwart.piglinpanel.config.AppConfigStore
+import nl.jessedezwart.piglinpanel.config.KeyringSecretCodec
 import nl.jessedezwart.piglinpanel.config.ServerRegistry
 import nl.jessedezwart.piglinpanel.config.piglinpanelConfigDir
+import nl.jessedezwart.piglinpanel.control.ServerControlService
+import nl.jessedezwart.piglinpanel.control.SshShell
 import nl.jessedezwart.piglinpanel.curseforge.CurseForgeClient
 import nl.jessedezwart.piglinpanel.env.ServerEnvironmentResolver
 import nl.jessedezwart.piglinpanel.fs.DefaultServerFileSystemProvider
@@ -15,6 +19,7 @@ import nl.jessedezwart.piglinpanel.fs.ServerFileSystemProvider
 import nl.jessedezwart.piglinpanel.logs.LogService
 import nl.jessedezwart.piglinpanel.modrinth.ModrinthClient
 import nl.jessedezwart.piglinpanel.modrinth.createHttpClient
+import nl.jessedezwart.piglinpanel.mods.ModCompatibilityService
 import nl.jessedezwart.piglinpanel.mods.ModHashStore
 import nl.jessedezwart.piglinpanel.mods.ModHasher
 import nl.jessedezwart.piglinpanel.mods.ModService
@@ -35,10 +40,23 @@ class AppGraph {
 
     private val configDir = piglinpanelConfigDir()
 
+    private val secrets = KeyringSecretCodec.openOrFallback(
+        service = "Piglin Panel",
+        fallback = AesSecretCodec(FileSystem.SYSTEM, configDir / "secret.key"),
+    )
+
+    /** Whether credentials go to the OS credential store, or to the encrypted fallback file. */
+    val usesOsCredentialStore = secrets is KeyringSecretCodec
+
     private val configStore = AppConfigStore(
         fileSystem = FileSystem.SYSTEM,
         configPath = configDir / "config.json",
+        secrets = secrets,
     )
+
+    /** Where the config lives, so the settings screen can point at it. */
+    val configPath = configStore.configPath
+
     private val rconConfigResolver = RconConfigResolver(fileSystems)
     private val environmentResolver = ServerEnvironmentResolver(fileSystems)
 
@@ -59,11 +77,13 @@ class AppGraph {
     )
     val modService = ModService(fileSystems, modrinthClient, ModHasher(modHashStore), curseForgeClient)
     val modInstallService = ModInstallService(modService, searchSources)
+    val modCompatibilityService = ModCompatibilityService(searchSources)
     val fileService = FileService(fileSystems, QuerzNbtCodec())
     val logService = LogService(fileService)
     val rconService = RconService()
     val statusService = ServerStatusService()
     val systemInfoService = SystemInfoService()
+    val serverControlService = ServerControlService(SshShell())
 
     fun shutdown() {
         scope.cancel()

@@ -51,8 +51,6 @@ private sealed interface InstallUiState {
     data class Failed(val message: String) : InstallUiState
 }
 
-private val LOADERS: List<String?> = listOf(null, "fabric", "forge", "neoforge", "quilt")
-private fun loaderLabel(loader: String?) = loader?.replaceFirstChar { it.uppercase() } ?: "Any"
 private fun itemKey(hit: ModSearchHit) = "${hit.source}:${hit.projectId}"
 
 /** Mod discovery: search Modrinth/CurseForge and one-click install with dependency resolution. */
@@ -132,11 +130,11 @@ fun BrowseModsTab(
                     }
                 }
             }
-            OutlinedTextField(
+            McVersionField(
+                graph = graph,
                 value = mcVersion,
                 onValueChange = { mcVersion = it },
-                label = { Text("MC version") },
-                singleLine = true,
+                label = "MC version",
                 modifier = Modifier.width(140.dp),
             )
             // Shown even for a single folder: where a download lands is worth seeing before clicking

@@ -17,8 +17,26 @@ class FakeModSearchSource(
         return searchResult
     }
 
-    override suspend fun latestCompatibleVersion(projectId: String, loader: String?, mcVersion: String?): ModVersionInfo? =
-        versions[projectId]
+    /** Overridable so a test can make the answer depend on the requested loader/game version. */
+    var latestCompatible: (projectId: String, loader: String?, mcVersion: String?) -> ModVersionInfo? =
+        { projectId, _, _ -> versions[projectId] }
+    val latestCompatibleCalls = mutableListOf<String>()
+
+    override suspend fun latestCompatibleVersion(projectId: String, loader: String?, mcVersion: String?): ModVersionInfo? {
+        latestCompatibleCalls += projectId
+        return latestCompatible(projectId, loader, mcVersion)
+    }
+
+    /** Minecraft versions per project id, for the compatibility sweep. */
+    val supportedVersions = LinkedHashMap<String, Set<String>>()
+    var supportedVersionsError: Throwable? = null
+    val supportedVersionsCalls = mutableListOf<String>()
+
+    override suspend fun supportedGameVersions(projectId: String, loader: String?): Set<String> {
+        supportedVersionsCalls += projectId
+        supportedVersionsError?.let { throw it }
+        return supportedVersions[projectId].orEmpty()
+    }
 
     override suspend fun version(projectId: String, versionId: String): ModVersionInfo? =
         versions.values.firstOrNull { it.projectId == projectId && it.versionId == versionId }

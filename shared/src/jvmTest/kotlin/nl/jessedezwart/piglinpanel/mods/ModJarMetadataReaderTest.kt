@@ -135,6 +135,77 @@ class ModJarMetadataReaderTest {
         assertEquals("modern", metadata.modId)
     }
 
+    /** A jar that ships other jars inside it, the way loaders' jar-in-jar mechanisms do. */
+    private fun jarBundling(manifest: Pair<String, String>, vararg nested: Pair<String, ByteArray>): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zip ->
+            zip.putNextEntry(ZipEntry(manifest.first))
+            zip.write(manifest.second.toByteArray())
+            zip.closeEntry()
+            for ((name, bytes) in nested) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+        return out.toByteArray()
+    }
+
+    @Test
+    fun countsBundledJarsIdsAsProvided() {
+        val metadata = ModJarMetadataReader.read(
+            jarBundling(
+                "fabric.mod.json" to """{ "id": "sable", "name": "Sable" }""",
+                "META-INF/jars/sablecompanion-1.0.jar" to
+                    jar("fabric.mod.json" to """{ "id": "sablecompanion" }"""),
+            ),
+        )!!
+
+        assertEquals("sable", metadata.modId)
+        assertTrue("sablecompanion" in metadata.ids())
+    }
+
+    @Test
+    fun looksThroughNeoForgeJarJarTwoLevelsDeep() {
+        // Forgified Fabric API's shape: a NeoForge jar bundling a jar that bundles the fabric modules.
+        val metadata = ModJarMetadataReader.read(
+            jarBundling(
+                "META-INF/neoforge.mods.toml" to "[[mods]]\nmodId = \"fabric_api\"\n",
+                "META-INF/jarjar/fabric-api-base.jar" to jarBundling(
+                    "fabric.mod.json" to """{ "id": "fabric-api-base" }""",
+                    "META-INF/jars/fabric.jar" to jar("fabric.mod.json" to """{ "id": "fabric" }"""),
+                ),
+            ),
+        )!!
+
+        assertEquals("fabric_api", metadata.modId)
+        assertTrue("fabric" in metadata.ids(), "expected bundled fabric module, got ${metadata.ids()}")
+    }
+
+    @Test
+    fun treatsEveryModDeclaredInOneTomlAsProvided() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                [[mods]]
+                modId = "simulated"
+                displayName = "Simulated"
+                [[mods]]
+                modId = "simulated_extras"
+
+                [[dependencies.simulated_extras]]
+                    modId = "simulated"
+                    type = "required"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals("simulated", metadata.modId)
+        assertEquals(listOf("simulated_extras"), metadata.provides)
+        // The second mod's dependency on the first is satisfied inside the same jar.
+        assertEquals(emptyList(), metadata.requires)
+    }
+
     @Test
     fun returnsNullForJarsWithoutAModManifest() {
         assertNull(ModJarMetadataReader.read(jar()))
