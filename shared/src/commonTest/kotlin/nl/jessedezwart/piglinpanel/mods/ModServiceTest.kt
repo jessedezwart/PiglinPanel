@@ -69,6 +69,23 @@ private fun update(latestName: String = "2.0.0") = ModUpdate(
     downloads = 0,
 )
 
+private fun modFile(
+    path: String,
+    archived: Boolean,
+    folderId: String = "mods",
+    update: ModUpdate? = null,
+) = ModFile(
+    folderId = folderId,
+    folderName = folderId,
+    folderPath = path.substringBeforeLast('/', ""),
+    relativePath = path,
+    fileName = path.substringAfterLast('/'),
+    size = 1,
+    archived = archived,
+    sha1 = null,
+    update = update,
+)
+
 class ModServiceTest {
     private val fs = FakeServerFileSystem()
 
@@ -119,7 +136,7 @@ class ModServiceTest {
     }
 
     @Test
-    fun modrinthMatchWinsAndIsNotLookedUpOnCurseForge() = runTest {
+    fun modrinthMatchWinsButCurseForgeIsStillRecordedAsASource() = runTest {
         fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
         val curseForge = FakeCurseForge(mapOf(FINGERPRINT_123 to update("cf-3.0")))
 
@@ -127,8 +144,7 @@ class ModServiceTest {
             .scan(ServerProfile(), checkUpdates = true)
 
         assertEquals("2.0.0", mods.single().update?.latestVersionName)
-        assertEquals(emptyList(), curseForge.requestedFingerprints)
-        assertEquals(0, curseForge.lookupCalls)
+        assertEquals(setOf(ModSource.MODRINTH, ModSource.CURSEFORGE), mods.single().sources)
     }
 
     @Test
@@ -245,13 +261,61 @@ class ModServiceTest {
     fun activateEnablesArchivedAndDisablesCurrent() = runTest {
         fs.put("mods/create-5.1.jar", byteArrayOf(1))
         fs.put("mods/create-5.0.jar.disabled", byteArrayOf(2))
+        val project = update().copy(projectId = "create")
+        val active = modFile("mods/create-5.1.jar", archived = false, update = project)
+        val archived = modFile("mods/create-5.0.jar.disabled", archived = true, update = project)
 
-        service().activate(ServerProfile(), "mods/create-5.0.jar.disabled", "mods/create-5.1.jar")
+        service().activate(ServerProfile(), listOf(active, archived), archived)
 
         assertTrue("mods/create-5.0.jar" in fs.files)
         assertTrue("mods/create-5.1.jar.disabled" in fs.files)
         assertFalse("mods/create-5.0.jar.disabled" in fs.files)
         assertFalse("mods/create-5.1.jar" in fs.files)
+    }
+
+    @Test
+    fun activateKeepsBothVersionsWhenTheyShareAFileName() = runTest {
+        fs.put("mods/mod.jar", byteArrayOf(1))
+        fs.put("mods/mod.jar.disabled", byteArrayOf(2))
+        val active = modFile("mods/mod.jar", archived = false)
+        val archived = modFile("mods/mod.jar.disabled", archived = true)
+
+        service().activate(ServerProfile(), listOf(active, archived), archived)
+
+        assertEquals(listOf<Byte>(2), fs.files["mods/mod.jar"]?.toList())
+        assertEquals(listOf<Byte>(1), fs.files["mods/mod~1.jar.disabled"]?.toList())
+        assertEquals(2, fs.files.size)
+    }
+
+    @Test
+    fun activateDisablesTheOtherVersionEvenWhenTheScanKnowsNothingAboutIt() = runTest {
+        // A quick scan resolves neither a project nor a mod id, so the caller cannot say which file
+        // is the active one; the file names still identify the pair.
+        fs.put("mods/mod.jar", byteArrayOf(1))
+        fs.put("mods/mod.jar.disabled", byteArrayOf(2))
+        val active = modFile("mods/mod.jar", archived = false)
+        val archived = modFile("mods/mod.jar.disabled", archived = true)
+
+        service().activate(ServerProfile(), listOf(active, archived), archived)
+
+        assertFalse(fs.files.keys.count { !it.endsWith(".disabled") } > 1)
+    }
+
+    @Test
+    fun activateLeavesTheSameModInAnotherFolderAlone() = runTest {
+        fs.put("mods/mod.jar", byteArrayOf(1))
+        fs.put("client/mod.jar", byteArrayOf(1))
+        fs.put("mods/mod-old.jar.disabled", byteArrayOf(2))
+        val project = update().copy(projectId = "p")
+        val active = modFile("mods/mod.jar", archived = false, folderId = "mods", update = project)
+        val client = modFile("client/mod.jar", archived = false, folderId = "client", update = project)
+        val archived = modFile("mods/mod-old.jar.disabled", archived = true, folderId = "mods", update = project)
+
+        service().activate(ServerProfile(), listOf(active, client, archived), archived)
+
+        assertTrue("client/mod.jar" in fs.files)
+        assertTrue("mods/mod.jar.disabled" in fs.files)
+        assertTrue("mods/mod-old.jar" in fs.files)
     }
 
     @Test
@@ -263,5 +327,32 @@ class ModServiceTest {
 
         assertTrue("mods/old.jar.disabled" in fs.files)
         assertEquals(2, fs.files["mods/mod.jar"]?.size)
+    }
+
+    @Test
+    fun theJarsOwnSideWinsOverTheRepositorys() {
+        // Modrinth calls Auth Me client-supported and server-supported; the jar says client-only,
+        // and the loader is the one that enforces it.
+        val both = update().copy(clientSide = "required", serverSide = "required")
+        val mod = modFile("mods/authme.jar", archived = false, update = both)
+            .copy(metadata = ModJarMetadata(modId = "authme", side = ModSide.CLIENT))
+
+        assertEquals(ModSide.CLIENT, mod.side)
+    }
+
+    @Test
+    fun theRepositoryAnswersWhenTheJarSaysNothing() {
+        val clientOnly = update().copy(clientSide = "required", serverSide = "unsupported")
+        val mod = modFile("mods/betterf3.jar", archived = false, update = clientOnly)
+            .copy(metadata = ModJarMetadata(modId = "betterf3"))
+
+        assertEquals(ModSide.CLIENT, mod.side)
+    }
+
+    @Test
+    fun aModNeitherTheJarNorTheRepositoryPlacesStaysUnknown() {
+        val mod = modFile("mods/mystery.jar", archived = false)
+
+        assertEquals(ModSide.UNKNOWN, mod.side)
     }
 }

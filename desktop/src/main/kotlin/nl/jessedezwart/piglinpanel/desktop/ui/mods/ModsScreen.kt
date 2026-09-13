@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,15 +15,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -39,12 +36,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -52,7 +49,7 @@ import kotlinx.coroutines.launch
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
 import nl.jessedezwart.piglinpanel.desktop.ui.common.FilterChip
-import nl.jessedezwart.piglinpanel.desktop.ui.common.IconButton
+import nl.jessedezwart.piglinpanel.desktop.ui.common.ModSideBadge
 import nl.jessedezwart.piglinpanel.desktop.ui.common.ModSourceBadge
 import nl.jessedezwart.piglinpanel.desktop.ui.common.OutlinedButton
 import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_BUTTON_HEIGHT
@@ -60,18 +57,32 @@ import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_BUTTON_PADDING
 import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_HEIGHT
 import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_ICON
 import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_TEXT_BUTTON_PADDING
-import nl.jessedezwart.piglinpanel.desktop.ui.common.SUB_ROW_HEIGHT
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Tab
 import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
 import nl.jessedezwart.piglinpanel.desktop.ui.common.TriStateCheckbox
 import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModGroup
+import nl.jessedezwart.piglinpanel.model.formatDownloads
 import nl.jessedezwart.piglinpanel.model.ServerProfile
+import nl.jessedezwart.piglinpanel.mods.ModSide
 import nl.jessedezwart.piglinpanel.mods.ScanProgress
 
 /** The size Material always draws a checkbox at, regardless of the size it is laid out in. */
 private val CHECKBOX_DRAW_SIZE = 20.dp
+
+/**
+ * Column widths of the installed-mods table. The header and the rows read from the same constants,
+ * which is the whole reason the columns line up.
+ */
+private val COL_SELECT = 18.dp
+private val COL_SIDE = 54.dp
+private val COL_REPO = 44.dp
+private val COL_DOWNLOADS = 68.dp
+private val COL_DATE = 78.dp
+private val COL_ACTIONS = 240.dp
+private const val COL_NAME_WEIGHT = 2.0f
+private const val COL_FILE_WEIGHT = 2.4f
 
 /** A pending disable/delete that other installed mods depend on, held until the user confirms it. */
 private data class Breakage(
@@ -84,7 +95,13 @@ private data class Breakage(
 /** A mod mutation: runs [block], then rescans (checking updates when [checkUpdatesAfter]). */
 private typealias Mutation = (label: String, checkUpdatesAfter: Boolean, block: suspend () -> Unit) -> Unit
 
-/** Mod management: installed mods (scan, update, enable/disable/delete) and mod discovery/install. */
+/** One line of the table: a single jar, and the mod it is a version of. */
+private data class ModRow(val group: ModGroup, val file: ModFile, val active: Boolean)
+
+/** What the table is ordered by. */
+private enum class SortKey { NAME, FILE, SIDE, DOWNLOADS, DATE }
+
+/** Mod management: installed mods, mod discovery/install, the dependency graph and compatibility. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostState) {
@@ -170,7 +187,8 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
         PrimaryTabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Installed") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Browse") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Compatibility") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Dependency graph") })
+            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Compatibility") })
         }
         Box(Modifier.fillMaxSize().padding(top = 6.dp)) {
             when (tab) {
@@ -192,7 +210,8 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
                     snackbar = snackbar,
                     onInstalled = { rescan(checkUpdates = true) },
                 )
-                // Reads the same scan the Installed tab shows, so a check needs no second scan.
+                // Reads the same scan the Installed tab shows, so neither needs a second scan.
+                2 -> DependencyGraphTab(mods = mods, groups = groups)
                 else -> CompatibilityTab(
                     graph = graph,
                     profile = profile,
@@ -219,17 +238,43 @@ private fun InstalledModsTab(
 ) {
     val busy = task != null
 
-    /** Mods whose disabled versions are unfolded. Survives a rescan, so the tree does not refold. */
-    val expanded = remember(profile.id) { mutableStateSetOf<String>() }
-
     /** Set while a removal is waiting on confirmation because other mods depend on the target. */
     var breakage by remember(profile.id) { mutableStateOf<Breakage?>(null) }
 
+    var query by remember(profile.id) { mutableStateOf("") }
+
+    /** Off by default: the disabled versions are history, and the table is about what is running. */
+    var showDisabled by remember(profile.id) { mutableStateOf(false) }
+
     /** Narrows the list to mods with no enabled jar left, for finding something to re-activate. */
     var disabledOnly by remember(profile.id) { mutableStateOf(false) }
+    var sideFilter by remember(profile.id) { mutableStateOf<ModSide?>(null) }
+    var sortKey by remember(profile.id) { mutableStateOf(SortKey.NAME) }
+    var ascending by remember(profile.id) { mutableStateOf(true) }
 
-    val disabled = remember(groups) { groups.filter { it.active == null } }
-    val visible = if (disabledOnly) disabled else groups
+    /** More than one mod folder means a bare file name no longer says which jar is meant. */
+    val showFolder = profile.modFolders.size > 1
+
+    val fullyDisabled = remember(groups) { groups.filter { it.active == null } }
+
+    val rows = remember(groups, query, showDisabled, disabledOnly, sideFilter, sortKey, ascending) {
+        val matching = groups.filter { group ->
+            (!disabledOnly || group.active == null) &&
+                (sideFilter == null || group.side == sideFilter) &&
+                group.matches(query)
+        }
+        val ordered = matching.sortedWith(comparatorFor(sortKey, ascending))
+        buildList {
+            for (group in ordered) {
+                group.active?.let { add(ModRow(group, it, active = true)) }
+                // A mod with nothing enabled has only its disabled versions to offer, so those stay
+                // visible however the filter is set — otherwise the row could not be acted on.
+                if (showDisabled || group.active == null) {
+                    group.archived.forEach { add(ModRow(group, it, active = false)) }
+                }
+            }
+        }
+    }
 
     /**
      * Runs a disable/delete, first asking about any mods it would break. The check is skipped when
@@ -323,16 +368,49 @@ private fun InstalledModsTab(
             OutlinedButton(onClick = { rescan(false, false) }, enabled = !busy) {
                 Text("Quick scan")
             }
+            if (busy && task != "Scan") {
+                Text("$task…", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Filter by name or file", style = MaterialTheme.typography.bodySmall) },
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.width(240.dp),
+            )
+            FilterChip(
+                selected = showDisabled,
+                onClick = { showDisabled = !showDisabled },
+                label = { Text("Show disabled versions") },
+            )
             FilterChip(
                 selected = disabledOnly,
                 onClick = { disabledOnly = !disabledOnly },
                 label = {
-                    Text(if (disabled.isEmpty()) "Disabled only" else "Disabled only (${disabled.size})")
+                    Text(if (fullyDisabled.isEmpty()) "Fully disabled" else "Fully disabled (${fullyDisabled.size})")
                 },
             )
-            if (busy && task != "Scan") {
-                Text("$task…", style = MaterialTheme.typography.bodySmall)
-            }
+            FilterChip(
+                selected = sideFilter == ModSide.CLIENT,
+                onClick = { sideFilter = if (sideFilter == ModSide.CLIENT) null else ModSide.CLIENT },
+                label = { Text("Client-only") },
+            )
+            FilterChip(
+                selected = sideFilter == ModSide.SERVER,
+                onClick = { sideFilter = if (sideFilter == ModSide.SERVER) null else ModSide.SERVER },
+                label = { Text("Server-only") },
+            )
+            Text(
+                "${rows.distinctBy { it.group.key }.size} of ${groups.size} mods",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         progress?.let { p ->
             Column {
@@ -350,49 +428,52 @@ private fun InstalledModsTab(
                 )
             }
         }
-        if (visible.isEmpty() && !busy) {
+        if (groups.isEmpty() && !busy) {
             Text(
-                if (disabledOnly && groups.isNotEmpty()) {
-                    "No fully disabled mods."
-                } else {
-                    "No mods scanned yet. Run a scan to list mods."
-                },
+                "No mods scanned yet. Run a scan to list mods.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+        } else if (rows.isEmpty() && !busy) {
+            Text("No mods match the current filters.", style = MaterialTheme.typography.bodyMedium)
+        }
+        if (rows.isNotEmpty()) {
+            TableHeader(
+                sortKey = sortKey,
+                ascending = ascending,
+                onSort = { key ->
+                    if (key == sortKey) ascending = !ascending else { sortKey = key; ascending = true }
+                },
+            )
+            HorizontalDivider()
         }
         LazyColumn {
-            items(visible, key = { it.key }) { group ->
-                ModGroupRow(
-                    group = group,
+            items(rows, key = { it.file.relativePath }) { row ->
+                ModTableRow(
+                    row = row,
+                    showFolder = showFolder,
                     enabled = !busy,
-                    selected = group.key in selected,
+                    selected = row.group.key in selected,
                     onToggleSelected = {
-                        if (!selected.add(group.key)) selected.remove(group.key)
-                    },
-                    // A group with nothing enabled shows all it can offer in its children, so the
-                    // filtered list unfolds itself rather than making every row a second click.
-                    expanded = disabledOnly || group.key in expanded,
-                    onToggleExpanded = {
-                        if (!expanded.add(group.key)) expanded.remove(group.key)
+                        if (!selected.add(row.group.key)) selected.remove(row.group.key)
                     },
                     onApplyUpdate = { mod ->
                         mutate("Update", true) {
                             graph.modService.applyUpdate(profile, mod)
-                            notify("Updated ${group.displayName}")
+                            notify("Updated ${row.group.displayName}")
                         }
                     },
                     // These rescans check updates: renaming a jar does not change its bytes, so the
                     // hashes and the update lookups both come straight from cache. Scanning without
-                    // them would drop every mod's project identity and shatter the tree into one
+                    // them would drop every mod's project identity and shatter the table into one
                     // row per file.
                     onDisable = { mod ->
-                        removing("Disable", mod, group.displayName) {
+                        removing("Disable", mod, row.group.displayName) {
                             mutate("Disable", true) { graph.modService.disablePath(profile, mod.relativePath) }
                         }
                     },
                     onActivate = { mod ->
                         mutate("Activate", true) {
-                            graph.modService.activate(profile, mod.relativePath, group.active?.relativePath)
+                            graph.modService.activate(profile, mods, mod)
                             // Dependencies that are installed but still disabled are pointed out
                             // rather than enabled: what the server loads stays the user's call.
                             val needed = graph.modService.disabledDependenciesOf(mods, mod)
@@ -402,7 +483,7 @@ private fun InstalledModsTab(
                         }
                     },
                     onDelete = { mod ->
-                        removing("Delete", mod, group.displayName) {
+                        removing("Delete", mod, row.group.displayName) {
                             mutate("Delete", true) { graph.modService.delete(profile, mod) }
                         }
                     },
@@ -412,97 +493,160 @@ private fun InstalledModsTab(
     }
 }
 
+/** Whether a mod answers to [query], by its own name or by any of its file names. */
+private fun ModGroup.matches(query: String): Boolean {
+    if (query.isBlank()) return true
+    val needle = query.trim()
+    return displayName.contains(needle, ignoreCase = true) ||
+        active?.fileName?.contains(needle, ignoreCase = true) == true ||
+        archived.any { it.fileName.contains(needle, ignoreCase = true) }
+}
+
+private fun comparatorFor(key: SortKey, ascending: Boolean): Comparator<ModGroup> {
+    val base: Comparator<ModGroup> = when (key) {
+        SortKey.NAME -> compareBy { it.displayName.lowercase() }
+        SortKey.FILE -> compareBy { (it.active ?: it.archived.firstOrNull())?.fileName?.lowercase() ?: "" }
+        // Named mods first, so ordering by side gathers the one-sided ones rather than the silent ones.
+        SortKey.SIDE -> compareBy<ModGroup> { it.side == ModSide.UNKNOWN }.thenBy { it.side.name }
+        SortKey.DOWNLOADS -> compareBy { it.downloads }
+        SortKey.DATE -> compareBy { it.modifiedAt?.toEpochMilliseconds() ?: 0L }
+    }
+    return if (ascending) base else base.reversed()
+}
+
+@Composable
+private fun TableHeader(sortKey: SortKey, ascending: Boolean, onSort: (SortKey) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(ROW_HEIGHT),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Spacer(Modifier.width(COL_SELECT))
+        Spacer(Modifier.width(ROW_ICON))
+        HeaderCell("Name", SortKey.NAME, sortKey, ascending, onSort, Modifier.weight(COL_NAME_WEIGHT))
+        HeaderCell("File", SortKey.FILE, sortKey, ascending, onSort, Modifier.weight(COL_FILE_WEIGHT))
+        HeaderCell("Side", SortKey.SIDE, sortKey, ascending, onSort, Modifier.width(COL_SIDE))
+        HeaderLabel("Repo", Modifier.width(COL_REPO))
+        HeaderCell(
+            "Downloads",
+            SortKey.DOWNLOADS,
+            sortKey,
+            ascending,
+            onSort,
+            Modifier.width(COL_DOWNLOADS),
+            TextAlign.End,
+        )
+        HeaderCell("Date", SortKey.DATE, sortKey, ascending, onSort, Modifier.width(COL_DATE))
+        Spacer(Modifier.width(COL_ACTIONS))
+    }
+}
+
+@Composable
+private fun HeaderCell(
+    label: String,
+    key: SortKey,
+    sortKey: SortKey,
+    ascending: Boolean,
+    onSort: (SortKey) -> Unit,
+    modifier: Modifier,
+    align: TextAlign = TextAlign.Start,
+) {
+    val active = key == sortKey
+    Text(
+        text = if (active) "$label ${if (ascending) "▲" else "▼"}" else label,
+        modifier = modifier.handCursor().clickable { onSort(key) },
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+        color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = align,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+/** A column that nothing sorts by — there is no useful order for a pair of repository badges. */
+@Composable
+private fun HeaderLabel(label: String, modifier: Modifier) {
+    Text(
+        text = label,
+        modifier = modifier,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.Medium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+    )
+}
+
 /**
- * A mod as a tree node: the active version on a single [ROW_HEIGHT] line, with its disabled versions
- * folded away underneath it. Mods without disabled versions are leaves and have no toggle.
+ * One jar on one line. A disabled version is drawn in the same columns as its active sibling but
+ * dimmed, so the table stays a single grid rather than a tree with rows that do not line up.
  */
 @Composable
-private fun ModGroupRow(
-    group: ModGroup,
+private fun ModTableRow(
+    row: ModRow,
+    showFolder: Boolean,
     enabled: Boolean,
     selected: Boolean,
     onToggleSelected: () -> Unit,
-    expanded: Boolean,
-    onToggleExpanded: () -> Unit,
     onApplyUpdate: (ModFile) -> Unit,
     onDisable: (ModFile) -> Unit,
     onActivate: (ModFile) -> Unit,
     onDelete: (ModFile) -> Unit,
 ) {
-    val children = group.archived
-    val guideColor = MaterialTheme.colorScheme.outlineVariant
+    val group = row.group
+    val file = row.file
+    val dimmed = !row.active
+    val primary = if (dimmed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+    val secondary = MaterialTheme.colorScheme.onSurfaceVariant
+    val update = group.update
 
-    Column {
-        Row(
-            Modifier.fillMaxWidth().height(ROW_HEIGHT),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            if (children.isEmpty()) {
-                Spacer(Modifier.size(ROW_ICON))
-            } else {
-                IconButton(onClick = onToggleExpanded, modifier = Modifier.size(ROW_ICON)) {
-                    Icon(
-                        if (expanded) Icons.Default.ExpandMore else Icons.Default.ChevronRight,
-                        contentDescription = if (expanded) "Collapse" else "Expand",
-                        modifier = Modifier.size(ROW_ICON),
-                    )
-                }
-            }
-            Box(Modifier.size(ROW_ICON)) {
+    Row(
+        Modifier.fillMaxWidth().height(ROW_HEIGHT),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        // Only a mod with an update to apply can be ticked, so most rows leave the column empty.
+        if (row.active && update != null && update.available()) {
+            RowCheckbox(
+                state = ToggleableState(selected),
+                enabled = enabled,
+                contentDescription = "Select ${group.displayName} for update",
+                onClick = onToggleSelected,
+            )
+        } else {
+            Spacer(Modifier.width(COL_SELECT))
+        }
+        Box(Modifier.size(ROW_ICON)) {
+            if (row.active) {
                 group.iconUrl?.let { url ->
                     AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(ROW_ICON))
                 }
             }
-            // The name and details double as the toggle, since a 16dp chevron is a small target.
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .then(
-                        if (children.isEmpty()) {
-                            Modifier
-                        } else {
-                            Modifier.handCursor().clickable(onClick = onToggleExpanded)
-                        },
-                    ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    group.displayName,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+        }
+        Row(
+            Modifier.weight(COL_NAME_WEIGHT),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                group.displayName,
+                style = MaterialTheme.typography.bodySmall,
+                color = primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            // Only the active row carries the mod's problems: a disabled version loads nothing and
+            // so breaks nothing.
+            if (row.active) {
+                val problems = listOfNotNull(
+                    group.missingDependencies.takeIf { it.isNotEmpty() }
+                        ?.let { "missing ${it.joinToString(", ")}" },
+                    group.disabledDependencies.takeIf { it.isNotEmpty() }
+                        ?.let { "disabled ${it.joinToString(", ")}" },
                 )
-                Text(
-                    listOfNotNull(
-                        group.folderName.takeIf { it.isNotBlank() },
-                        group.active?.fileName,
-                        children.count { it.archived }.takeIf { it > 0 }?.let { "$it disabled" },
-                        // Why this mod is here at all: a library nobody chose directly reads as
-                        // clutter until you can see what pulled it in.
-                        group.requiredBy.takeIf { it.isNotEmpty() }?.let { "needed by ${it.joinToString(", ")}" },
-                        group.update?.takeIf { it.downloads > 0 }?.let { "${it.formattedDownloads()} downloads" },
-                    ).joinToString("  ·  "),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (group.missingDependencies.isNotEmpty()) {
+                if (problems.isNotEmpty()) {
                     Text(
-                        "missing ${group.missingDependencies.joinToString(", ")}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (group.disabledDependencies.isNotEmpty()) {
-                    Text(
-                        "disabled ${group.disabledDependencies.joinToString(", ")}",
+                        problems.joinToString("  ·  "),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error,
                         maxLines = 1,
@@ -510,18 +654,50 @@ private fun ModGroupRow(
                     )
                 }
             }
-            val update = group.update
-            if (update != null && update.available()) {
-                // Only a mod with an update to apply can be ticked, so the checkbox rides along
-                // with its update button rather than adding a column every other row leaves blank.
-                RowCheckbox(
-                    state = ToggleableState(selected),
-                    enabled = enabled,
-                    contentDescription = "Select ${group.displayName} for update",
-                    onClick = onToggleSelected,
-                )
+        }
+        Text(
+            if (showFolder) "${group.folderName}/${file.fileName}" else file.fileName,
+            Modifier.weight(COL_FILE_WEIGHT),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (dimmed) secondary else primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(Modifier.width(COL_SIDE), contentAlignment = Alignment.CenterStart) {
+            if (row.active) ModSideBadge(group.side)
+        }
+        Row(
+            Modifier.width(COL_REPO),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (row.active) {
+                group.sources.sortedBy { it.name }.forEach { source -> ModSourceBadge(source) }
+            }
+        }
+        Text(
+            if (row.active && group.downloads > 0) formatDownloads(group.downloads) else "",
+            Modifier.width(COL_DOWNLOADS),
+            style = MaterialTheme.typography.bodySmall,
+            color = secondary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+        )
+        Text(
+            file.modifiedAt?.toString()?.take(10) ?: "",
+            Modifier.width(COL_DATE),
+            style = MaterialTheme.typography.bodySmall,
+            color = secondary,
+            maxLines = 1,
+        )
+        Row(
+            Modifier.width(COL_ACTIONS),
+            horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (row.active && update != null && update.available()) {
                 Button(
-                    onClick = { group.active?.let(onApplyUpdate) },
+                    onClick = { onApplyUpdate(file) },
                     modifier = Modifier.height(ROW_BUTTON_HEIGHT),
                     enabled = enabled,
                     contentPadding = ROW_BUTTON_PADDING,
@@ -532,57 +708,23 @@ private fun ModGroupRow(
                         "Update to ${update.latestVersionName ?: update.latestVersionId}",
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            group.active?.let { active ->
-                RowAction("Disable", enabled) { onDisable(active) }
-                RowAction("Delete", enabled) { onDelete(active) }
+            // A dimmed row is normally a disabled version, but a second *enabled* jar of the same
+            // mod also lands here — offering "Activate" for one of those would disable the real
+            // active version and leave two enabled jars behind.
+            if (file.archived) {
+                RowAction("Activate", enabled) { onActivate(file) }
+            } else {
+                RowAction("Disable", enabled) { onDisable(file) }
             }
-        }
-        if (expanded) {
-            // Children hang off a guide line drawn down the centre of the parent's chevron column.
-            Column(
-                Modifier
-                    .padding(start = ROW_ICON / 2)
-                    .drawBehind {
-                        drawLine(
-                            color = guideColor,
-                            start = Offset(0f, 0f),
-                            end = Offset(0f, size.height),
-                            strokeWidth = 1f,
-                        )
-                    },
-            ) {
-                children.forEach { child ->
-                    Row(
-                        Modifier.fillMaxWidth().height(SUB_ROW_HEIGHT).padding(start = ROW_ICON + 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            child.fileName,
-                            Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        // A child is normally a disabled version, but a second *enabled* jar of the
-                        // same mod also lands here — offering "Activate" for one of those would
-                        // disable the real active version and leave two enabled jars behind.
-                        if (child.archived) {
-                            RowAction("Activate", enabled) { onActivate(child) }
-                        } else {
-                            RowAction("Disable", enabled) { onDisable(child) }
-                        }
-                        RowAction("Delete", enabled) { onDelete(child) }
-                    }
-                }
-            }
+            RowAction("Delete", enabled) { onDelete(file) }
         }
     }
 }
+
 
 /**
  * A checkbox sized to fit inside a dense row. Material draws it at a fixed 20dp and reserves a 48dp

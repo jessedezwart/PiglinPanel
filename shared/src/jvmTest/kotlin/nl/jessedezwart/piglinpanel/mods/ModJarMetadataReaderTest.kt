@@ -213,4 +213,179 @@ class ModJarMetadataReaderTest {
         // Present but unparseable is still "unknown", never "no dependencies".
         assertNull(ModJarMetadataReader.read(jar("fabric.mod.json" to "{ broken")))
     }
+
+    @Test
+    fun readsClientSideOnlyOutOfNeoForgeToml() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                modLoader = "javafml"
+                loaderVersion = "[4,)"
+                clientSideOnly = true
+                [[mods]]
+                modId = "authme"
+                displayName = "Auth Me"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.CLIENT, metadata.side)
+    }
+
+    @Test
+    fun readsSideFromTheModsOwnPlatformDependency() {
+        // NeoForge has no per-mod side key, so a client-only mod says so by scoping its own
+        // dependency on Minecraft or the loader. This is the shape most client mods actually ship.
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                modLoader="javafml"
+                [[mods]]
+                   modId="badoptimizations"
+                [[dependencies.badoptimizations]]
+                   modId="minecraft"
+                   mandatory=true
+                   versionRange="[1.21.1,)"
+                   side="CLIENT"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.CLIENT, metadata.side)
+    }
+
+    @Test
+    fun oneSidedPlatformDependencyWinsOverABothSidedOne() {
+        // Auth Me scopes neoforge to CLIENT while leaving minecraft on BOTH; the mod is client-only.
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                modLoader = "javafml"
+                [[mods]]
+                modId = "authme"
+                [[dependencies.'authme']]
+                modId = "neoforge"
+                type = "required"
+                side = "CLIENT"
+                [[dependencies.'authme']]
+                modId = "minecraft"
+                type = "required"
+                side = "BOTH"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.CLIENT, metadata.side)
+    }
+
+    @Test
+    fun aBothSidedPlatformDependencyIsNotTakenAsAClaim() {
+        // `side = "BOTH"` is what every generated toml ships with, so it says nothing about the mod
+        // and must leave room for the repository to answer instead.
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                modLoader = "javafml"
+                [[mods]]
+                modId = "bookshelf"
+                [[dependencies.bookshelf]]
+                modId = "minecraft"
+                type = "required"
+                side = "BOTH"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.UNKNOWN, metadata.side)
+    }
+
+    @Test
+    fun readsFabricEnvironment() {
+        val client = ModJarMetadataReader.read(
+            jar("fabric.mod.json" to """{ "id": "iris", "environment": "client" }"""),
+        )!!
+        val both = ModJarMetadataReader.read(
+            jar("fabric.mod.json" to """{ "id": "lithium", "environment": "*" }"""),
+        )!!
+        val unstated = ModJarMetadataReader.read(
+            jar("fabric.mod.json" to """{ "id": "carpet" }"""),
+        )!!
+
+        assertEquals(ModSide.CLIENT, client.side)
+        assertEquals(ModSide.BOTH, both.side)
+        assertEquals(ModSide.UNKNOWN, unstated.side)
+    }
+
+    @Test
+    fun readsQuiltEnvironment() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "quilt.mod.json" to """
+                {
+                  "quilt_loader": { "id": "example", "version": "1.0" },
+                  "minecraft": { "environment": "dedicated_server" }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.SERVER, metadata.side)
+    }
+
+    @Test
+    fun aMergedJarTakesTheSideFromWhicheverManifestCommitsToOne() {
+        // Build Guide ships both manifests: the NeoForge one scopes it to the client, the Fabric
+        // one still carries the "runs everywhere" default it was generated with.
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "fabric.mod.json" to """{ "id": "buildguide", "environment": "*" }""",
+                "META-INF/neoforge.mods.toml" to """
+                modLoader = "javafml"
+                [[mods]]
+                modId = "buildguide"
+                [[dependencies.buildguide]]
+                modId = "minecraft"
+                side = "CLIENT"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals("buildguide", metadata.modId)
+        assertEquals(ModSide.CLIENT, metadata.side)
+    }
+
+    @Test
+    fun readsClientSideOnlyInsideTheModsTable() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                modLoader = "javafml"
+                [[mods]]
+                    modId = "example"
+                    clientSideOnly = "true"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.CLIENT, metadata.side)
+    }
+
+    @Test
+    fun theModsOwnSideKeyWinsOverAStaleClientSideOnlyFlag() {
+        // Distant Horizons keeps a clientSideOnly from before it grew server support, next to the
+        // `side` that reflects what it does now.
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                modLoader = "javafml"
+                [[mods]]
+                    modId = "distanthorizons"
+                    clientSideOnly = "true"
+                    side = "BOTH"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(ModSide.BOTH, metadata.side)
+    }
 }

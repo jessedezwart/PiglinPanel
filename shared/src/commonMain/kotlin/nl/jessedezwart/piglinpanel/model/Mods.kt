@@ -3,6 +3,7 @@ package nl.jessedezwart.piglinpanel.model
 import kotlin.math.roundToLong
 import kotlin.time.Instant
 import nl.jessedezwart.piglinpanel.mods.ModJarMetadata
+import nl.jessedezwart.piglinpanel.mods.ModSide
 import nl.jessedezwart.piglinpanel.search.ModSource
 
 data class ModFile(
@@ -17,7 +18,19 @@ data class ModFile(
     val update: ModUpdate?,
     /** What the jar declares about itself; null when it has not been read or has no manifest. */
     val metadata: ModJarMetadata? = null,
-)
+    /** Last modification time of the jar on the server; null when the listing carried none. */
+    val modifiedAt: Instant? = null,
+    /** The repositories that recognise this exact file. Empty until a scan has looked it up. */
+    val sources: Set<ModSource> = emptySet(),
+) {
+    /**
+     * Where this mod runs. The jar wins wherever it says anything: the loader enforces what the jar
+     * declares, while a repository's support levels are a curated judgement about the same mod.
+     */
+    val side: ModSide
+        get() = metadata?.side?.takeIf { it != ModSide.UNKNOWN }
+            ?: ModSide.ofRepository(update?.clientSide, update?.serverSide)
+}
 
 /**
  * A mod and all of its on-disk versions grouped together. The [active] file is the enabled `.jar`;
@@ -32,8 +45,14 @@ data class ModGroup(
     val active: ModFile?,
     val archived: List<ModFile>,
     val update: ModUpdate?,
-    /** Names of enabled mods that declare a hard dependency on this one; empty when nothing does. */
-    val requiredBy: List<String> = emptyList(),
+    /** Where this mod runs, resolved from the jar and then the repository; see [ModFile.side]. */
+    val side: ModSide = ModSide.UNKNOWN,
+    /** The repositories that recognise this mod's active file. */
+    val sources: Set<ModSource> = emptySet(),
+    /** Downloads reported by the repository for this project, or 0 when none knows it. */
+    val downloads: Long = 0,
+    /** Last modification time of the active jar on the server. */
+    val modifiedAt: Instant? = null,
     /** Required mod ids that no enabled jar provides — this mod will not load as things stand. */
     val missingDependencies: List<String> = emptyList(),
     /**
@@ -62,13 +81,16 @@ data class ModUpdate(
     fun available(): Boolean =
         latestVersionId != null && latestVersionId != currentVersionId && downloadUrl != null
 
-    fun formattedDownloads(): String =
-        when {
-            downloads >= 1_000_000 -> {
-                val tenthsOfMillions = (downloads / 100_000.0).roundToLong()
-                "${tenthsOfMillions / 10}.${tenthsOfMillions % 10}M"
-            }
-            downloads >= 1_000 -> "${(downloads / 1_000.0).roundToLong()}K"
-            else -> downloads.toString()
-        }
+    fun formattedDownloads(): String = formatDownloads(downloads)
 }
+
+/** A download count shortened to fit a table cell: `1.2M`, `340K`, `87`. */
+fun formatDownloads(downloads: Long): String =
+    when {
+        downloads >= 1_000_000 -> {
+            val tenthsOfMillions = (downloads / 100_000.0).roundToLong()
+            "${tenthsOfMillions / 10}.${tenthsOfMillions % 10}M"
+        }
+        downloads >= 1_000 -> "${(downloads / 1_000.0).roundToLong()}K"
+        else -> downloads.toString()
+    }

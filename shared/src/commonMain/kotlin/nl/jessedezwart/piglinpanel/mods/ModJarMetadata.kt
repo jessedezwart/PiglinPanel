@@ -27,6 +27,8 @@ data class ModJarMetadata(
     val requires: List<String> = emptyList(),
     /** Ids this mod can use but does not need. */
     val optional: List<String> = emptyList(),
+    /** Where the jar says it runs; [ModSide.UNKNOWN] when it says nothing. */
+    val side: ModSide = ModSide.UNKNOWN,
 ) {
     /** Every id this jar answers to. */
     fun ids(): List<String> = listOf(modId) + provides
@@ -78,14 +80,36 @@ object ModJarMetadataReader {
         val declared = readDeclared(jarBytes) ?: return null
         val known = declared.ids().toMutableSet()
         val bundled = bundledIds(jarBytes, MAX_NESTING).filter { known.add(it) }
-        return if (bundled.isEmpty()) declared else declared.copy(provides = declared.provides + bundled)
+        return declared.copy(
+            provides = declared.provides + bundled,
+            side = sideAcrossManifests(jarBytes, declared.side),
+        )
     }
 
+    /** Each loader's manifest, in the order a jar's identity is taken from them. */
+    private val MANIFESTS: List<Pair<String, (ByteArray) -> ModJarMetadata?>> = listOf(
+        "fabric.mod.json" to ::parseFabric,
+        "quilt.mod.json" to ::parseQuilt,
+        "META-INF/neoforge.mods.toml" to ::parseModsToml,
+        "META-INF/mods.toml" to ::parseModsToml,
+    )
+
     private fun readDeclared(jarBytes: ByteArray): ModJarMetadata? =
-        readZipEntry(jarBytes, "fabric.mod.json")?.let(::parseFabric)
-            ?: readZipEntry(jarBytes, "quilt.mod.json")?.let(::parseQuilt)
-            ?: readZipEntry(jarBytes, "META-INF/neoforge.mods.toml")?.let(::parseModsToml)
-            ?: readZipEntry(jarBytes, "META-INF/mods.toml")?.let(::parseModsToml)
+        MANIFESTS.firstNotNullOfOrNull { (entry, parse) -> readZipEntry(jarBytes, entry)?.let(parse) }
+
+    /**
+     * The side to believe for a jar shipping more than one loader's manifest.
+     *
+     * A merged fabric+neoforge jar carries both, and in practice only one of them is filled in
+     * honestly: Build Guide calls itself client-side only in its `neoforge.mods.toml` while its
+     * `fabric.mod.json` still says `"environment": "*"`. A definite CLIENT or SERVER anywhere in the
+     * jar therefore beats a BOTH that another manifest left at its default.
+     */
+    private fun sideAcrossManifests(jarBytes: ByteArray, primary: ModSide): ModSide {
+        if (primary.isNoteworthy()) return primary
+        val sides = MANIFESTS.mapNotNull { (entry, parse) -> readZipEntry(jarBytes, entry)?.let(parse)?.side }
+        return sides.firstOrNull { it.isNoteworthy() } ?: primary
+    }
 
     /**
      * Ids declared by the jars bundled inside [jarBytes], recursively. What those jars themselves
@@ -123,7 +147,32 @@ object ModJarMetadataReader {
             provides = sanitize(root.stringList("provides")),
             requires = sanitize(root.objectKeys("depends")),
             optional = sanitize(root.objectKeys("suggests") + root.objectKeys("recommends")),
+            side = environment(root.string("environment")),
         )
+    }
+
+    /**
+     * What a `mods.toml` amounts to, most specific claim first: the mod's own `side`, then a
+     * `clientSideOnly`/`serverSideOnly` flag, then the side its platform dependency was scoped to.
+     *
+     * The order matters where a file states both, which happens: Distant Horizons carries a stale
+     * `clientSideOnly = "true"` next to the `side = "BOTH"` that matches the server support it has
+     * since gained.
+     */
+    private fun modSide(modsSide: String?, declared: ModSide, platform: ModSide): ModSide =
+        when (modsSide?.uppercase()) {
+            "CLIENT" -> ModSide.CLIENT
+            "SERVER" -> ModSide.SERVER
+            "BOTH" -> ModSide.BOTH
+            else -> if (declared != ModSide.UNKNOWN) declared else platform
+        }
+
+    /** Fabric's and Quilt's `environment`: `client`, `server`/`dedicated_server`, or `*` for both. */
+    private fun environment(value: String?): ModSide = when (value?.lowercase()) {
+        "client" -> ModSide.CLIENT
+        "server", "dedicated_server" -> ModSide.SERVER
+        "*" -> ModSide.BOTH
+        else -> ModSide.UNKNOWN
     }
 
     /** `quilt.mod.json`: everything lives under `quilt_loader`, and `depends` is an array. */
@@ -139,6 +188,7 @@ object ModJarMetadataReader {
             provides = sanitize(loader.dependencyArray("provides").map { it.first }),
             requires = sanitize(depends.filterNot { it.second }.map { it.first }),
             optional = sanitize(depends.filter { it.second }.map { it.first }),
+            side = environment((root["minecraft"] as? JsonObject)?.string("environment")),
         )
     }
 
@@ -191,12 +241,30 @@ object ModJarMetadataReader {
         // A dependency table's fields arrive one per line, so they are collected until the next header.
         var dependencyId: String? = null
         var dependencyRequired = true
+        var dependencySide: String? = null
+
+        // What the file states outright, and what its own platform dependency implies.
+        var modsSide: String? = null
+        var declaredSide = ModSide.UNKNOWN
+        var platformSide = ModSide.UNKNOWN
 
         fun flushDependency() {
             val id = dependencyId ?: return
+            // A mod that scopes its own dependency on Minecraft or the loader to one side runs on
+            // that side: there is no per-mod side key in mods.toml, and this is what the mods that
+            // bother to say so actually write. `BOTH` is the value every generated template ships
+            // with, so it is read as silence rather than as a claim.
+            if (platformSide == ModSide.UNKNOWN && id.trim().lowercase() in PROVIDED_BY_PLATFORM) {
+                platformSide = when (dependencySide?.uppercase()) {
+                    "CLIENT" -> ModSide.CLIENT
+                    "SERVER" -> ModSide.SERVER
+                    else -> ModSide.UNKNOWN
+                }
+            }
             if (dependencyRequired) required += id else optional += id
             dependencyId = null
             dependencyRequired = true
+            dependencySide = null
         }
 
         for (raw in bytes.text().lineSequence()) {
@@ -226,6 +294,15 @@ object ModJarMetadataReader {
                 // Forge spells it `mandatory = true`; NeoForge uses `type = "required"`.
                 inDependencies && key == "mandatory" -> dependencyRequired = value.equals("true", ignoreCase = true)
                 inDependencies && key == "type" -> dependencyRequired = value.equals("required", ignoreCase = true)
+                inDependencies && key == "side" -> dependencySide = value
+                // NeoForge's outright statements of side. `side` on the mod itself is the newest
+                // and most specific of them; `clientSideOnly` is written both at the root of the
+                // file and inside the mod's own table, so both places are read.
+                inMods && key == "side" -> modsSide = value
+                !inDependencies && key == "clientsideonly" ->
+                    if (value.equals("true", ignoreCase = true)) declaredSide = ModSide.CLIENT
+                !inDependencies && key == "serversideonly" ->
+                    if (value.equals("true", ignoreCase = true)) declaredSide = ModSide.SERVER
             }
         }
         flushDependency()
@@ -241,6 +318,7 @@ object ModJarMetadataReader {
             // are satisfied from within, so they are not requirements of the jar as a whole.
             requires = sanitize(required) - ids.toSet(),
             optional = sanitize(optional) - ids.toSet(),
+            side = modSide(modsSide, declaredSide, platformSide),
         )
     }
 }
