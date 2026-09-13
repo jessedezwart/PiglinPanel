@@ -12,7 +12,15 @@ data class ModrinthProject(
     @SerialName("client_side") val clientSide: String? = null,
     @SerialName("server_side") val serverSide: String? = null,
     val downloads: Long = 0,
-)
+    val categories: List<String> = emptyList(),
+) {
+    /**
+     * Whether the project is *only* a library. Authors hand the `library` tag out freely — Create
+     * add-ons list it beside `technology` and `utility`, and Accessories carries it as an additional
+     * category — so a project that is anything else as well is taken to be that.
+     */
+    fun isLibrary(): Boolean = categories == listOf("library")
+}
 
 @Serializable
 data class ModrinthVersion(

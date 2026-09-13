@@ -51,7 +51,7 @@ class ModHasher(private val store: ModHashStore? = null) {
             val hashes = ModFileHashes(
                 sha1 = bytes.toByteString().sha1().hex(),
                 fingerprint = CurseForgeFingerprint.of(bytes),
-                metadata = ModJarMetadataReader.read(bytes),
+                metadata = ModJarMetadataReader.read(bytes, profile.modLoader),
             )
             stateLock.withLock { unsaved++ }
             hashes
@@ -71,10 +71,12 @@ class ModHasher(private val store: ModHashStore? = null) {
     /**
      * Enabling/disabling only renames the file, so the `.disabled` suffix is left out of the key:
      * the bytes are the same either way, and a toggle should not cost a re-read.
+     *
+     * The loader is part of the key because the metadata read from a merged jar depends on it.
      */
     private fun cacheKey(profile: ServerProfile, entry: FileEntry): String {
         val path = entry.path.removeSuffix(DISABLED_SUFFIX)
-        return "${profile.id}:$path:${entry.size}:${entry.modifiedAt?.toEpochMilliseconds() ?: 0}"
+        return "${profile.id}:${profile.modLoader.orEmpty()}:$path:${entry.size}:${entry.modifiedAt?.toEpochMilliseconds() ?: 0}"
     }
 
     suspend fun resolveSha1(

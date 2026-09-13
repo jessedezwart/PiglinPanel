@@ -3,6 +3,7 @@ package nl.jessedezwart.piglinpanel.mods
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
@@ -29,10 +30,18 @@ data class ModJarMetadata(
     val optional: List<String> = emptyList(),
     /** Where the jar says it runs; [ModSide.UNKNOWN] when it says nothing. */
     val side: ModSide = ModSide.UNKNOWN,
+    /**
+     * Whether the jar calls itself a library, via Mod Menu's `library` badge. Only Fabric and Quilt
+     * have a place to say so; false means "not said", not "not a library".
+     */
+    val library: Boolean = false,
 ) {
     /** Every id this jar answers to. */
     fun ids(): List<String> = listOf(modId) + provides
 }
+
+/** A manifest's path inside a jar, and the parser for it. */
+private typealias Manifest = Pair<String, (ByteArray) -> ModJarMetadata?>
 
 /**
  * Extracts [ModJarMetadata] from a mod jar's bytes, trying each loader's manifest in turn.
@@ -75,27 +84,42 @@ object ModJarMetadataReader {
      * The ids a jar answers to include the ones it bundles: a dependency that ships inside another
      * mod's jar is present as far as the loader is concerned, so reporting it missing would be a
      * lie — and the commonest one, since libraries are usually shipped this way.
+     *
+     * [loader] is the server's mod loader (`fabric`, `quilt`, `forge`, `neoforge`), when known. A
+     * merged jar declares different dependencies per loader — Collective's `fabric.mod.json` needs
+     * `fabric-api`, its `neoforge.mods.toml` does not — and only the running loader's are real.
      */
-    fun read(jarBytes: ByteArray): ModJarMetadata? {
-        val declared = readDeclared(jarBytes) ?: return null
+    fun read(jarBytes: ByteArray, loader: String? = null): ModJarMetadata? {
+        val manifests = manifestsFor(loader)
+        val declared = readDeclared(jarBytes, manifests) ?: return null
         val known = declared.ids().toMutableSet()
-        val bundled = bundledIds(jarBytes, MAX_NESTING).filter { known.add(it) }
+        val bundled = bundledIds(jarBytes, manifests, MAX_NESTING).filter { known.add(it) }
         return declared.copy(
             provides = declared.provides + bundled,
-            side = sideAcrossManifests(jarBytes, declared.side),
+            side = sideAcrossManifests(jarBytes, manifests, declared.side),
         )
     }
 
-    /** Each loader's manifest, in the order a jar's identity is taken from them. */
-    private val MANIFESTS: List<Pair<String, (ByteArray) -> ModJarMetadata?>> = listOf(
-        "fabric.mod.json" to ::parseFabric,
-        "quilt.mod.json" to ::parseQuilt,
-        "META-INF/neoforge.mods.toml" to ::parseModsToml,
-        "META-INF/mods.toml" to ::parseModsToml,
-    )
+    private val FABRIC: Manifest = "fabric.mod.json" to ::parseFabric
+    private val QUILT: Manifest = "quilt.mod.json" to ::parseQuilt
+    private val NEOFORGE: Manifest = "META-INF/neoforge.mods.toml" to ::parseModsToml
+    private val FORGE: Manifest = "META-INF/mods.toml" to ::parseModsToml
 
-    private fun readDeclared(jarBytes: ByteArray): ModJarMetadata? =
-        MANIFESTS.firstNotNullOfOrNull { (entry, parse) -> readZipEntry(jarBytes, entry)?.let(parse) }
+    /**
+     * Each loader's manifest, in the order a jar's identity is taken from them: the running loader's
+     * own first, then its close relatives, then the rest. The others stay as fallbacks because a
+     * jar with only a foreign manifest can still load — Quilt runs Fabric mods, and Connector runs
+     * them on NeoForge.
+     */
+    private fun manifestsFor(loader: String?): List<Manifest> = when (loader?.lowercase()) {
+        "neoforge" -> listOf(NEOFORGE, FORGE, FABRIC, QUILT)
+        "forge" -> listOf(FORGE, NEOFORGE, FABRIC, QUILT)
+        "quilt" -> listOf(QUILT, FABRIC, NEOFORGE, FORGE)
+        else -> listOf(FABRIC, QUILT, NEOFORGE, FORGE)
+    }
+
+    private fun readDeclared(jarBytes: ByteArray, manifests: List<Manifest>): ModJarMetadata? =
+        manifests.firstNotNullOfOrNull { (entry, parse) -> readZipEntry(jarBytes, entry)?.let(parse) }
 
     /**
      * The side to believe for a jar shipping more than one loader's manifest.
@@ -105,9 +129,9 @@ object ModJarMetadataReader {
      * `fabric.mod.json` still says `"environment": "*"`. A definite CLIENT or SERVER anywhere in the
      * jar therefore beats a BOTH that another manifest left at its default.
      */
-    private fun sideAcrossManifests(jarBytes: ByteArray, primary: ModSide): ModSide {
+    private fun sideAcrossManifests(jarBytes: ByteArray, manifests: List<Manifest>, primary: ModSide): ModSide {
         if (primary.isNoteworthy()) return primary
-        val sides = MANIFESTS.mapNotNull { (entry, parse) -> readZipEntry(jarBytes, entry)?.let(parse)?.side }
+        val sides = manifests.mapNotNull { (entry, parse) -> readZipEntry(jarBytes, entry)?.let(parse)?.side }
         return sides.firstOrNull { it.isNoteworthy() } ?: primary
     }
 
@@ -115,10 +139,12 @@ object ModJarMetadataReader {
      * Ids declared by the jars bundled inside [jarBytes], recursively. What those jars themselves
      * require is deliberately ignored: a bundled jar travels with whatever it needs.
      */
-    private fun bundledIds(jarBytes: ByteArray, depth: Int): List<String> {
+    private fun bundledIds(jarBytes: ByteArray, manifests: List<Manifest>, depth: Int): List<String> {
         if (depth <= 0) return emptyList()
         return readZipEntries(jarBytes, ::isBundledJar)
-            .flatMap { nested -> readDeclared(nested)?.ids().orEmpty() + bundledIds(nested, depth - 1) }
+            .flatMap { nested ->
+                readDeclared(nested, manifests)?.ids().orEmpty() + bundledIds(nested, manifests, depth - 1)
+            }
             .distinct()
     }
 
@@ -148,8 +174,13 @@ object ModJarMetadataReader {
             requires = sanitize(root.objectKeys("depends")),
             optional = sanitize(root.objectKeys("suggests") + root.objectKeys("recommends")),
             side = environment(root.string("environment")),
+            library = hasLibraryBadge((root["custom"] as? JsonObject)?.get("modmenu")),
         )
     }
+
+    /** Mod Menu's `"modmenu": { "badges": ["library"] }`, the flag it uses to hide libraries. */
+    private fun hasLibraryBadge(modmenu: JsonElement?): Boolean =
+        (modmenu as? JsonObject)?.stringList("badges")?.any { it.equals("library", ignoreCase = true) } == true
 
     /**
      * What a `mods.toml` amounts to, most specific claim first: the mod's own `side`, then a
@@ -189,6 +220,8 @@ object ModJarMetadataReader {
             requires = sanitize(depends.filterNot { it.second }.map { it.first }),
             optional = sanitize(depends.filter { it.second }.map { it.first }),
             side = environment((root["minecraft"] as? JsonObject)?.string("environment")),
+            // Quilt puts custom sections at the root of the file rather than under `custom`.
+            library = hasLibraryBadge(root["modmenu"]),
         )
     }
 
@@ -231,6 +264,9 @@ object ModJarMetadataReader {
         // One jar may declare several `[[mods]]`; the loader registers every one of them, so the
         // extras become ids this jar provides rather than being dropped.
         val modIds = mutableListOf<String>()
+        // Aliases a mod answers to, e.g. Forgified Fabric API's `fabric-api` for Fabric mods run
+        // through Connector.
+        val providedIds = mutableListOf<String>()
         var name: String? = null
         var version: String? = null
         val required = mutableListOf<String>()
@@ -285,6 +321,9 @@ object ModJarMetadataReader {
 
             when {
                 inMods && key == "modid" -> modIds += value
+                // Only the single-line `["a", "b"]` form, which is the one seen in practice.
+                inMods && key == "provides" ->
+                    providedIds += value.removePrefix("[").removeSuffix("]").split(',').map { it.trim().trim('"', '\'') }
                 inMods && key == "displayname" && name == null -> name = value
                 inMods && key == "version" && version == null -> version = value
                 inDependencies && key == "modid" -> {
@@ -313,7 +352,7 @@ object ModJarMetadataReader {
             modId = id,
             name = name,
             version = version,
-            provides = ids.drop(1),
+            provides = (ids.drop(1) + sanitize(providedIds)).distinct() - id,
             // A jar declaring several mods also declares their dependencies on each other; those
             // are satisfied from within, so they are not requirements of the jar as a whole.
             requires = sanitize(required) - ids.toSet(),

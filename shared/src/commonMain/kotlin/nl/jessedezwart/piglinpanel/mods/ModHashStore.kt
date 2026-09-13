@@ -26,9 +26,11 @@ class ModHashStore(
          * Bumped whenever the key format, either hash algorithm, or what is read out of a jar
          * changes, to discard stale files. Version 5 reads the side a jar declares it runs on,
          * which entries written before it lack — leaving them cached would leave every mod
-         * unlabelled until its file changed.
+         * unlabelled until its file changed. Version 6 reads whether a jar calls itself a library;
+         * version 7 reads the `provides` aliases in `mods.toml`; version 8 keys entries by loader and
+         * reads a merged jar through that loader's manifest.
          */
-        const val FORMAT_VERSION = 5
+        const val FORMAT_VERSION = 8
     }
 
     @Serializable

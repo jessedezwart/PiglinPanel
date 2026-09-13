@@ -352,6 +352,7 @@ class ModrinthClient(
             clientSide = project?.clientSide,
             serverSide = project?.serverSide,
             downloads = project?.downloads ?: 0,
+            library = project?.isLibrary() == true,
         )
     }
 

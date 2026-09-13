@@ -238,6 +238,7 @@ class CurseForgeClient(
             clientSide = null,
             serverSide = null,
             downloads = mod?.downloadCount ?: 0,
+            library = mod?.isLibrary() == true,
         )
     }
 

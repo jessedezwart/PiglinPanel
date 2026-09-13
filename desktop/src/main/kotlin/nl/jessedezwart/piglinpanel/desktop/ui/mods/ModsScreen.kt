@@ -248,6 +248,9 @@ private fun InstalledModsTab(
 
     /** Narrows the list to mods with no enabled jar left, for finding something to re-activate. */
     var disabledOnly by remember(profile.id) { mutableStateOf(false) }
+
+    /** Narrows the list to libraries nothing installed uses, for clearing out leftovers. */
+    var unusedLibrariesOnly by remember(profile.id) { mutableStateOf(false) }
     var sideFilter by remember(profile.id) { mutableStateOf<ModSide?>(null) }
     var sortKey by remember(profile.id) { mutableStateOf(SortKey.NAME) }
     var ascending by remember(profile.id) { mutableStateOf(true) }
@@ -256,10 +259,12 @@ private fun InstalledModsTab(
     val showFolder = profile.modFolders.size > 1
 
     val fullyDisabled = remember(groups) { groups.filter { it.active == null } }
+    val unusedLibraries = remember(groups) { groups.filter { it.unusedLibrary } }
 
-    val rows = remember(groups, query, showDisabled, disabledOnly, sideFilter, sortKey, ascending) {
+    val rows = remember(groups, query, showDisabled, disabledOnly, unusedLibrariesOnly, sideFilter, sortKey, ascending) {
         val matching = groups.filter { group ->
             (!disabledOnly || group.active == null) &&
+                (!unusedLibrariesOnly || group.unusedLibrary) &&
                 (sideFilter == null || group.side == sideFilter) &&
                 group.matches(query)
         }
@@ -394,6 +399,13 @@ private fun InstalledModsTab(
                 onClick = { disabledOnly = !disabledOnly },
                 label = {
                     Text(if (fullyDisabled.isEmpty()) "Fully disabled" else "Fully disabled (${fullyDisabled.size})")
+                },
+            )
+            FilterChip(
+                selected = unusedLibrariesOnly,
+                onClick = { unusedLibrariesOnly = !unusedLibrariesOnly },
+                label = {
+                    Text(if (unusedLibraries.isEmpty()) "Unused libraries" else "Unused libraries (${unusedLibraries.size})")
                 },
             )
             FilterChip(
@@ -651,6 +663,14 @@ private fun ModTableRow(
                         color = MaterialTheme.colorScheme.error,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                } else if (group.unusedLibrary) {
+                    // A hint, not an error: the library may still be wanted, e.g. by a datapack.
+                    Text(
+                        "unused library",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = secondary,
+                        maxLines = 1,
                     )
                 }
             }

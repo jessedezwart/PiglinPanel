@@ -350,6 +350,36 @@ class ModServiceTest {
     }
 
     @Test
+    fun flagsLibrariesThatNoEnabledModUses() {
+        val library = update().copy(library = true)
+        val used = modFile("mods/architectury.jar", archived = false, update = library.copy(projectId = "arch"))
+            .copy(metadata = ModJarMetadata(modId = "architectury"))
+        val optionallyUsed = modFile("mods/jei.jar", archived = false, update = library.copy(projectId = "jei"))
+            .copy(metadata = ModJarMetadata(modId = "jei"))
+        val orphan = modFile("mods/geckolib.jar", archived = false, update = library.copy(projectId = "gecko"))
+            .copy(metadata = ModJarMetadata(modId = "geckolib"))
+        // Only a disabled mod needs it, which does not count: a disabled jar loads nothing.
+        val disabledUser = modFile("mods/mobs.jar.disabled", archived = true)
+            .copy(metadata = ModJarMetadata(modId = "mobs", requires = listOf("geckolib")))
+        val unreadable = modFile("mods/mystery-lib.jar", archived = false, update = library.copy(projectId = "mystery"))
+        val user = modFile("mods/create.jar", archived = false)
+            .copy(metadata = ModJarMetadata(modId = "create", requires = listOf("architectury"), optional = listOf("jei")))
+
+        val unused = service().group(listOf(used, optionallyUsed, orphan, disabledUser, unreadable, user))
+            .filter { it.unusedLibrary }
+
+        assertEquals(listOf("geckolib.jar"), unused.map { it.active?.fileName })
+    }
+
+    @Test
+    fun aJarsLibraryBadgeCountsWithoutARepositoryMatch() {
+        val mod = modFile("mods/cloth.jar", archived = false)
+            .copy(metadata = ModJarMetadata(modId = "cloth-config", library = true))
+
+        assertTrue(service().group(listOf(mod)).single().unusedLibrary)
+    }
+
+    @Test
     fun aModNeitherTheJarNorTheRepositoryPlacesStaysUnknown() {
         val mod = modFile("mods/mystery.jar", archived = false)
 

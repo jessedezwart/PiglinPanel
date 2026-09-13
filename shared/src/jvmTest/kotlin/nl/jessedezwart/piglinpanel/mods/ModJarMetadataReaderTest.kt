@@ -51,6 +51,44 @@ class ModJarMetadataReaderTest {
     }
 
     @Test
+    fun readsModMenuLibraryBadgeFromFabricAndQuilt() {
+        val fabric = ModJarMetadataReader.read(
+            jar(
+                "fabric.mod.json" to """
+                { "id": "cloth-config", "custom": { "modmenu": { "badges": ["library"] } } }
+                """.trimIndent(),
+            ),
+        )!!
+        val quilt = ModJarMetadataReader.read(
+            jar(
+                "quilt.mod.json" to """
+                { "quilt_loader": { "id": "qsl" }, "modmenu": { "badges": ["library"] } }
+                """.trimIndent(),
+            ),
+        )!!
+        val plain = ModJarMetadataReader.read(jar("fabric.mod.json" to """{ "id": "sodium" }"""))!!
+
+        assertTrue(fabric.library)
+        assertTrue(quilt.library)
+        assertEquals(false, plain.library)
+    }
+
+    @Test
+    fun readsProvidedAliasesFromModsToml() {
+        val metadata = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                [[mods]]
+                modId = "fabric_api"
+                provides = ["fabric", "fabric-api"]
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(listOf("fabric", "fabric-api"), metadata.provides)
+    }
+
+    @Test
     fun treatsProvidedIdsAsSatisfyingDependencies() {
         val metadata = ModJarMetadataReader.read(
             jar(
@@ -133,6 +171,26 @@ class ModJarMetadataReaderTest {
         )!!
 
         assertEquals("modern", metadata.modId)
+    }
+
+    @Test
+    fun readsAMergedJarThroughTheRunningLoadersManifest() {
+        // Collective's shape: the Fabric manifest needs fabric-api, the NeoForge one does not.
+        val merged = jar(
+            "fabric.mod.json" to """{ "id": "collective", "depends": { "fabric-api": "*" } }""",
+            "META-INF/neoforge.mods.toml" to "[[mods]]\nmodId = \"collective\"\n",
+        )
+
+        assertEquals(emptyList(), ModJarMetadataReader.read(merged, loader = "neoforge")!!.requires)
+        assertEquals(listOf("fabric-api"), ModJarMetadataReader.read(merged, loader = "fabric")!!.requires)
+    }
+
+    @Test
+    fun fallsBackToAForeignManifestWhenTheLoadersOwnIsMissing() {
+        // A Fabric-only jar run on NeoForge through Connector.
+        val fabricOnly = jar("fabric.mod.json" to """{ "id": "sodium" }""")
+
+        assertEquals("sodium", ModJarMetadataReader.read(fabricOnly, loader = "neoforge")?.modId)
     }
 
     /** A jar that ships other jars inside it, the way loaders' jar-in-jar mechanisms do. */

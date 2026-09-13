@@ -27,7 +27,17 @@ data class CurseForgeMod(
     val downloadCount: Long = 0,
     /** Populated by the bulk `/mods` endpoint; the newest file per game version + loader. */
     val latestFiles: List<CurseForgeFile> = emptyList(),
-)
+    val primaryCategoryId: Int? = null,
+) {
+    /**
+     * Whether the mod's *primary* category is "API and Library". Secondary categories are handed out
+     * as loosely as Modrinth's tags, so a mod merely also filed there is not taken to be a library.
+     */
+    fun isLibrary(): Boolean = primaryCategoryId == API_AND_LIBRARY_CATEGORY_ID
+}
+
+/** Minecraft mods' "API and Library" category on CurseForge. */
+private const val API_AND_LIBRARY_CATEGORY_ID = 421
 
 @Serializable
 data class CurseForgeLogo(val thumbnailUrl: String? = null)

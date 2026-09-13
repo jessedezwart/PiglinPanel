@@ -30,6 +30,10 @@ data class ModFile(
     val side: ModSide
         get() = metadata?.side?.takeIf { it != ModSide.UNKNOWN }
             ?: ModSide.ofRepository(update?.clientSide, update?.serverSide)
+
+    /** Whether the repository files this mod as a library, or the jar badges itself as one. */
+    val library: Boolean
+        get() = update?.library == true || metadata?.library == true
 }
 
 /**
@@ -60,6 +64,14 @@ data class ModGroup(
      * because the fix is a click, not a download — but still the user's click to make.
      */
     val disabledDependencies: List<String> = emptyList(),
+    /** Whether this mod is a library; see [ModFile.library]. */
+    val library: Boolean = false,
+    /**
+     * A library whose enabled jar no other enabled mod declares a use for, required or optional —
+     * most likely left behind by a mod that has since been removed. Never set for a jar whose
+     * manifest could not be read, since then nothing is known about who uses it.
+     */
+    val unusedLibrary: Boolean = false,
 )
 
 data class ModUpdate(
@@ -77,6 +89,8 @@ data class ModUpdate(
     val downloads: Long,
     /** Which repository resolved this update; determines who downloads [downloadUrl]. */
     val source: ModSource = ModSource.MODRINTH,
+    /** Whether the repository files this project as a library. */
+    val library: Boolean = false,
 ) {
     fun available(): Boolean =
         latestVersionId != null && latestVersionId != currentVersionId && downloadUrl != null

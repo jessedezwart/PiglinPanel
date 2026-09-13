@@ -276,6 +276,8 @@ class ModService(
                     ?.let { graph.disabledDependenciesOf(it).map(::displayName) }
                     .orEmpty()
                     .distinct(),
+                library = representative.library,
+                unusedLibrary = active != null && active.library && active.metadata != null && !graph.isUsed(active),
             )
         }
     }
@@ -374,8 +376,10 @@ class ModService(
             val modrinth = resolved[hashes.sha1]
             val curse = curseForgeResolved[hashes.fingerprint]
             // Modrinth's match is the one that gets applied; CurseForge's is recorded either way.
+            // Either repository calling it a library is enough; they categorise independently.
+            val applied = (modrinth ?: curse)?.let { it.copy(library = it.library || curse?.library == true) }
             mods[i] = mod.copy(
-                update = modrinth ?: curse ?: mod.update,
+                update = applied ?: mod.update,
                 sources = buildSet {
                     if (modrinth != null) add(ModSource.MODRINTH)
                     if (curse != null) add(ModSource.CURSEFORGE)

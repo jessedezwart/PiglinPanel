@@ -36,6 +36,17 @@ class ModDependencyGraph private constructor(
     }
 
     /**
+     * Whether any other enabled mod declares [file] as a dependency, required or optional. False for
+     * a file without metadata, which cannot be matched against anything — check that separately.
+     */
+    fun isUsed(file: ModFile): Boolean {
+        val ids = file.metadata?.ids()?.toSet() ?: return false
+        return enabled.any { other ->
+            other !== file && (other.declared.requires + other.declared.optional).any { it in ids }
+        }
+    }
+
+    /**
      * The enabled mods that would be left without one of their required dependencies if [file] were
      * disabled or deleted — that is, [dependentsOf] minus any whose dependency is also satisfied by
      * a second enabled jar. This is what is worth interrupting the user for.
