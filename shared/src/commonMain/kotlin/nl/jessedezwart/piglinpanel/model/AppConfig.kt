@@ -36,6 +36,11 @@ data class ServerProfile(
     val mcVersion: String? = null,
     /** Detected mod loader: "fabric" | "forge" | "neoforge" | "quilt". Null when unknown. */
     val modLoader: String? = null,
+    /**
+     * Updates the user chose to skip: mod group key to the version id that was ignored. Only that
+     * version is skipped — once the repository publishes a newer one, the update is offered again.
+     */
+    val ignoredUpdates: Map<String, String> = emptyMap(),
 ) {
     /**
      * Label shown wherever a profile is listed: `host:/root/path` for SSH profiles, the plain root

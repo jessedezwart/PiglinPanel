@@ -198,6 +198,12 @@ class ModService(
         fileSystem.writeBytes(target, bytes)
     }
 
+    /** Release notes of the version [update] would install, from whichever repository resolved it. */
+    suspend fun changelog(update: ModUpdate): String? = when (update.source) {
+        ModSource.MODRINTH -> modrinthClient.changelog(update)
+        ModSource.CURSEFORGE -> curseForgeClient?.changelog(update) ?: update.changelog
+    }
+
     /**
      * Moves [from] to [desired], or to the nearest free name when something else already sits
      * there. [taken] caches the names each folder holds across a sequence of moves; pass a fresh

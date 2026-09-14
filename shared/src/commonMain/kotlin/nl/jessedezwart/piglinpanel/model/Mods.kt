@@ -91,6 +91,11 @@ data class ModUpdate(
     val source: ModSource = ModSource.MODRINTH,
     /** Whether the repository files this project as a library. */
     val library: Boolean = false,
+    /**
+     * Release notes of the latest version, when the lookup that found it carried them. Modrinth's
+     * does; CurseForge serves them from a separate endpoint, so theirs are fetched on demand.
+     */
+    val changelog: String? = null,
 ) {
     fun available(): Boolean =
         latestVersionId != null && latestVersionId != currentVersionId && downloadUrl != null
@@ -107,4 +112,15 @@ fun formatDownloads(downloads: Long): String =
         }
         downloads >= 1_000 -> "${(downloads / 1_000.0).roundToLong()}K"
         else -> downloads.toString()
+    }
+
+/** A file size shortened to fit a table cell: `1.4 MB`, `220 KB`, `87 B`. */
+fun formatSize(bytes: Long): String =
+    when {
+        bytes >= 1_048_576 -> {
+            val tenths = (bytes / 104_857.6).roundToLong()
+            "${tenths / 10}.${tenths % 10} MB"
+        }
+        bytes >= 1_024 -> "${(bytes / 1_024.0).roundToLong()} KB"
+        else -> "$bytes B"
     }

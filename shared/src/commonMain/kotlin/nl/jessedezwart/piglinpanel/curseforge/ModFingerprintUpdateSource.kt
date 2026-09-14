@@ -13,4 +13,7 @@ interface ModFingerprintUpdateSource {
     suspend fun findSuggestedUpdates(fingerprints: List<Long>): Map<Long, ModUpdate>
 
     suspend fun downloadUpdate(update: ModUpdate): ByteArray
+
+    /** Release notes of [update]'s latest version as Markdown, or null when there are none. */
+    suspend fun changelog(update: ModUpdate): String? = update.changelog
 }

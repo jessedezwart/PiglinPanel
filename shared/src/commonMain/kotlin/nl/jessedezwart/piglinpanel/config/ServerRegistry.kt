@@ -87,6 +87,23 @@ class ServerRegistry(
         }
     }
 
+    /**
+     * Records that [versionId] of the mod keyed [modKey] should not be offered as an update, or
+     * clears the entry when [versionId] is null. Unlike [save], this does not touch the server:
+     * nothing it changes needs re-detecting.
+     */
+    fun setIgnoredUpdate(profileId: String, modKey: String, versionId: String?) {
+        update { config ->
+            val profile = config.servers.firstOrNull { it.id == profileId } ?: return@update config
+            val ignored = if (versionId == null) {
+                profile.ignoredUpdates - modKey
+            } else {
+                profile.ignoredUpdates + (modKey to versionId)
+            }
+            config.replaceServer(profile.copy(ignoredUpdates = ignored))
+        }
+    }
+
     fun delete(id: String) {
         update { config ->
             config.copy(

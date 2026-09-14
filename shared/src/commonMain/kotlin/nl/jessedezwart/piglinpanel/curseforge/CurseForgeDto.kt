@@ -86,6 +86,38 @@ data class CurseForgeFile(
     val fileFingerprint: Long? = null,
 )
 
+@Serializable
+data class CurseForgeChangelogResponse(val data: String? = null)
+
+/**
+ * CurseForge changelogs are HTML, while the panel renders changelogs as Markdown (Modrinth's native
+ * format). The common tags map onto their Markdown equivalents; every other tag is dropped and the
+ * common entities decoded. Line breaks become Markdown hard breaks, since a bare newline would be
+ * folded into the paragraph around it.
+ */
+internal fun htmlToMarkdown(html: String): String = html
+    .replace(Regex("(?i)<a[^>]*href=\"([^\"]*)\"[^>]*>(.*?)</a>")) { "[${it.groupValues[2]}](${it.groupValues[1]})" }
+    .replace(Regex("(?i)<h([1-6])[^>]*>")) { "\n\n" + "#".repeat(it.groupValues[1].toInt()) + " " }
+    .replace(Regex("(?i)</?(strong|b)>"), "**")
+    .replace(Regex("(?i)</?(em|i)>"), "*")
+    .replace(Regex("(?i)</?code>"), "`")
+    .replace(Regex("(?i)<br\\s*/?>"), "  \n")
+    .replace(Regex("(?i)<li[^>]*>"), "\n- ")
+    .replace(Regex("(?i)</(p|div|h[1-6]|ul|ol)>"), "\n\n")
+    .replace(Regex("<[^>]+>"), "")
+    .replace("&nbsp;", " ")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&amp;", "&")
+    // Trailing spaces are kept only where they are a hard break, so stray indentation cannot turn
+    // into one.
+    .lines()
+    .joinToString("\n") { if (it.endsWith("  ") && it.isNotBlank()) it.trimEnd() + "  " else it.trimEnd() }
+    .replace(Regex("\n{3,}"), "\n\n")
+    .trim()
+
 /** Loader names CurseForge mixes into [CurseForgeFile.gameVersions] alongside Minecraft versions. */
 internal val CURSEFORGE_LOADER_NAMES = setOf("forge", "fabric", "quilt", "neoforge")
 

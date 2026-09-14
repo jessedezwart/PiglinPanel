@@ -198,6 +198,18 @@ class CurseForgeClient(
         return download(url)
     }
 
+    override suspend fun changelog(update: ModUpdate): String? {
+        update.changelog?.let { return it }
+        val modId = update.projectId ?: return null
+        val fileId = update.latestVersionId ?: return null
+        val uri = "$apiBaseUrl/mods/${modId.encodeURLParameter()}/files/${fileId.encodeURLParameter()}/changelog"
+        val response = get(uri)
+        if (response.statusCode == 404) return null
+        requireSuccess(response, uri)
+        val html = json.decodeFromString<CurseForgeChangelogResponse>(response.bodyText()).data
+        return html?.let(::htmlToMarkdown)?.takeIf { it.isNotBlank() }
+    }
+
     private suspend fun exactMatches(fingerprints: List<Long>): List<CurseForgeFingerprintMatch> {
         val uri = "$apiBaseUrl/fingerprints"
         val response = postJson(uri, FingerprintsRequest(fingerprints))

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -29,22 +31,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
+import com.mikepenz.markdown.coil3.Coil3ImageTransformerImpl
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownTypography
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
@@ -63,10 +74,13 @@ import nl.jessedezwart.piglinpanel.desktop.ui.common.TriStateCheckbox
 import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModGroup
+import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.model.formatDownloads
+import nl.jessedezwart.piglinpanel.model.formatSize
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.mods.ModSide
 import nl.jessedezwart.piglinpanel.mods.ScanProgress
+import nl.jessedezwart.piglinpanel.search.ModSource
 
 /** The size Material always draws a checkbox at, regardless of the size it is laid out in. */
 private val CHECKBOX_DRAW_SIZE = 20.dp
@@ -79,8 +93,9 @@ private val COL_SELECT = 18.dp
 private val COL_SIDE = 54.dp
 private val COL_REPO = 44.dp
 private val COL_DOWNLOADS = 68.dp
+private val COL_SIZE = 64.dp
 private val COL_DATE = 78.dp
-private val COL_ACTIONS = 240.dp
+private val COL_ACTIONS = 290.dp
 private const val COL_NAME_WEIGHT = 2.0f
 private const val COL_FILE_WEIGHT = 2.4f
 
@@ -99,7 +114,43 @@ private typealias Mutation = (label: String, checkUpdatesAfter: Boolean, block: 
 private data class ModRow(val group: ModGroup, val file: ModFile, val active: Boolean)
 
 /** What the table is ordered by. */
-private enum class SortKey { NAME, FILE, SIDE, DOWNLOADS, DATE }
+private enum class SortKey { NAME, FILE, SIDE, DOWNLOADS, SIZE, DATE }
+
+/** Where one mod's changelog stands in the overview dialog. */
+private sealed interface ChangelogState {
+    data object Loading : ChangelogState
+    data class Loaded(val text: String?) : ChangelogState
+    data class Failed(val message: String) : ChangelogState
+}
+
+/** Cache key for a changelog: the notes belong to the version, not the mod. */
+private fun changelogKey(group: ModGroup, update: ModUpdate): String = "${group.key}@${update.latestVersionId}"
+
+/**
+ * The repository page of the project [update] was resolved against, or null for a mod no repository
+ * knows. Modrinth wins the lookup wherever it knows a file, so this is its page whenever it has one.
+ */
+private fun projectUrl(update: ModUpdate?): String? {
+    val projectId = update?.projectId ?: return null
+    return when (update.source) {
+        ModSource.MODRINTH -> "https://modrinth.com/mod/$projectId"
+        ModSource.CURSEFORGE -> "https://www.curseforge.com/projects/$projectId"
+    }
+}
+
+/** Makes a mod name open its repository page when it has one. */
+@Composable
+private fun Modifier.projectLink(update: ModUpdate?, enabled: Boolean = true): Modifier {
+    val url = projectUrl(update) ?: return this
+    val uriHandler = LocalUriHandler.current
+    return handCursor().clickable(enabled = enabled) { uriHandler.openUri(url) }
+}
+
+/** Whether the user chose to skip the exact update [group] is currently offering. */
+private fun ModGroup.updateIgnored(profile: ServerProfile): Boolean {
+    val latest = update?.latestVersionId ?: return false
+    return profile.ignoredUpdates[key] == latest
+}
 
 /** Mod management: installed mods, mod discovery/install, the dependency graph and compatibility. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -237,6 +288,7 @@ private fun InstalledModsTab(
     notify: (String) -> Unit,
 ) {
     val busy = task != null
+    val scope = rememberCoroutineScope()
 
     /** Set while a removal is waiting on confirmation because other mods depend on the target. */
     var breakage by remember(profile.id) { mutableStateOf<Breakage?>(null) }
@@ -252,6 +304,13 @@ private fun InstalledModsTab(
     /** Narrows the list to libraries nothing installed uses, for clearing out leftovers. */
     var unusedLibrariesOnly by remember(profile.id) { mutableStateOf(false) }
     var sideFilter by remember(profile.id) { mutableStateOf<ModSide?>(null) }
+
+    /** Narrows the list to mods with an update to apply, ignored ones excluded. */
+    var updatableOnly by remember(profile.id) { mutableStateOf(false) }
+    var showChangelogs by remember(profile.id) { mutableStateOf(false) }
+
+    /** Changelogs already fetched this session, so reopening the overview does not refetch them. */
+    val changelogs = remember(profile.id) { mutableStateMapOf<String, ChangelogState>() }
     var sortKey by remember(profile.id) { mutableStateOf(SortKey.NAME) }
     var ascending by remember(profile.id) { mutableStateOf(true) }
 
@@ -261,10 +320,22 @@ private fun InstalledModsTab(
     val fullyDisabled = remember(groups) { groups.filter { it.active == null } }
     val unusedLibraries = remember(groups) { groups.filter { it.unusedLibrary } }
 
-    val rows = remember(groups, query, showDisabled, disabledOnly, unusedLibrariesOnly, sideFilter, sortKey, ascending) {
+    val updatable = remember(groups, profile.ignoredUpdates) {
+        groups.mapNotNull { group ->
+            val active = group.active ?: return@mapNotNull null
+            if (group.update?.available() == true && !group.updateIgnored(profile)) group to active else null
+        }
+    }
+    val updatableKeys = remember(updatable) { updatable.map { it.first.key }.toSet() }
+
+    val rows = remember(
+        groups, query, showDisabled, disabledOnly, unusedLibrariesOnly, updatableOnly, updatableKeys, sideFilter,
+        sortKey, ascending,
+    ) {
         val matching = groups.filter { group ->
             (!disabledOnly || group.active == null) &&
                 (!unusedLibrariesOnly || group.unusedLibrary) &&
+                (!updatableOnly || group.key in updatableKeys) &&
                 (sideFilter == null || group.side == sideFilter) &&
                 group.matches(query)
         }
@@ -291,13 +362,10 @@ private fun InstalledModsTab(
         if (dependents.isEmpty()) run() else breakage = Breakage(action, title, dependents, run)
     }
 
-    val updatable = remember(groups) {
-        groups.mapNotNull { group ->
-            val active = group.active ?: return@mapNotNull null
-            if (group.update?.available() == true) group to active else null
-        }
+    /** Skips (or, with a null version, un-skips) the update [group] is offering, for this profile. */
+    fun ignoreUpdate(group: ModGroup, ignore: Boolean) {
+        graph.registry.setIgnoredUpdate(profile.id, group.key, if (ignore) group.update?.latestVersionId else null)
     }
-    val updatableKeys = remember(updatable) { updatable.map { it.first.key }.toSet() }
 
     /** Mods ticked for a targeted update. Empty means "all of them", so the button always works. */
     val selected = remember(profile.id) { mutableStateSetOf<String>() }
@@ -337,6 +405,17 @@ private fun InstalledModsTab(
         )
     }
 
+    if (showChangelogs) {
+        ChangelogDialog(
+            graph = graph,
+            updates = updatable,
+            changelogs = changelogs,
+            scope = scope,
+            onIgnore = { group -> ignoreUpdate(group, true) },
+            onDismiss = { showChangelogs = false },
+        )
+    }
+
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = { rescan(true, false) }, enabled = !busy) {
@@ -367,6 +446,9 @@ private fun InstalledModsTab(
                     },
                 )
             }
+            OutlinedButton(onClick = { showChangelogs = true }, enabled = updatable.isNotEmpty()) {
+                Text("Changelogs")
+            }
             OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
                 Text("Force refresh")
             }
@@ -388,6 +470,11 @@ private fun InstalledModsTab(
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.width(240.dp),
+            )
+            FilterChip(
+                selected = updatableOnly,
+                onClick = { updatableOnly = !updatableOnly },
+                label = { Text(if (updatable.isEmpty()) "Updatable" else "Updatable (${updatable.size})") },
             )
             FilterChip(
                 selected = showDisabled,
@@ -465,6 +552,8 @@ private fun InstalledModsTab(
                     showFolder = showFolder,
                     enabled = !busy,
                     selected = row.group.key in selected,
+                    ignored = row.group.updateIgnored(profile),
+                    onIgnore = { ignore -> ignoreUpdate(row.group, ignore) },
                     onToggleSelected = {
                         if (!selected.add(row.group.key)) selected.remove(row.group.key)
                     },
@@ -521,6 +610,7 @@ private fun comparatorFor(key: SortKey, ascending: Boolean): Comparator<ModGroup
         // Named mods first, so ordering by side gathers the one-sided ones rather than the silent ones.
         SortKey.SIDE -> compareBy<ModGroup> { it.side == ModSide.UNKNOWN }.thenBy { it.side.name }
         SortKey.DOWNLOADS -> compareBy { it.downloads }
+        SortKey.SIZE -> compareBy { (it.active ?: it.archived.firstOrNull())?.size ?: 0L }
         SortKey.DATE -> compareBy { it.modifiedAt?.toEpochMilliseconds() ?: 0L }
     }
     return if (ascending) base else base.reversed()
@@ -548,6 +638,7 @@ private fun TableHeader(sortKey: SortKey, ascending: Boolean, onSort: (SortKey) 
             Modifier.width(COL_DOWNLOADS),
             TextAlign.End,
         )
+        HeaderCell("Size", SortKey.SIZE, sortKey, ascending, onSort, Modifier.width(COL_SIZE), TextAlign.End)
         HeaderCell("Date", SortKey.DATE, sortKey, ascending, onSort, Modifier.width(COL_DATE))
         Spacer(Modifier.width(COL_ACTIONS))
     }
@@ -599,6 +690,8 @@ private fun ModTableRow(
     showFolder: Boolean,
     enabled: Boolean,
     selected: Boolean,
+    ignored: Boolean,
+    onIgnore: (Boolean) -> Unit,
     onToggleSelected: () -> Unit,
     onApplyUpdate: (ModFile) -> Unit,
     onDisable: (ModFile) -> Unit,
@@ -611,6 +704,7 @@ private fun ModTableRow(
     val primary = if (dimmed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
     val update = group.update
+    val hasUpdate = row.active && update != null && update.available()
 
     Row(
         Modifier.fillMaxWidth().height(ROW_HEIGHT),
@@ -618,7 +712,7 @@ private fun ModTableRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Only a mod with an update to apply can be ticked, so most rows leave the column empty.
-        if (row.active && update != null && update.available()) {
+        if (hasUpdate && !ignored) {
             RowCheckbox(
                 state = ToggleableState(selected),
                 enabled = enabled,
@@ -642,6 +736,7 @@ private fun ModTableRow(
         ) {
             Text(
                 group.displayName,
+                Modifier.projectLink(update),
                 style = MaterialTheme.typography.bodySmall,
                 color = primary,
                 maxLines = 1,
@@ -704,6 +799,14 @@ private fun ModTableRow(
             maxLines = 1,
         )
         Text(
+            formatSize(file.size),
+            Modifier.width(COL_SIZE),
+            style = MaterialTheme.typography.bodySmall,
+            color = secondary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+        )
+        Text(
             file.modifiedAt?.toString()?.take(10) ?: "",
             Modifier.width(COL_DATE),
             style = MaterialTheme.typography.bodySmall,
@@ -715,14 +818,18 @@ private fun ModTableRow(
             horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (row.active && update != null && update.available()) {
+            if (hasUpdate && ignored) {
+                // Kept visible so the skip can be undone from the row that made it.
+                RowAction("Unignore update", enabled) { onIgnore(false) }
+            } else if (hasUpdate) {
+                RowAction("Ignore", enabled) { onIgnore(true) }
                 Button(
                     onClick = { onApplyUpdate(file) },
                     modifier = Modifier.height(ROW_BUTTON_HEIGHT),
                     enabled = enabled,
                     contentPadding = ROW_BUTTON_PADDING,
                 ) {
-                    ModSourceBadge(update.source)
+                    ModSourceBadge(update!!.source)
                     Spacer(Modifier.width(4.dp))
                     Text(
                         "Update to ${update.latestVersionName ?: update.latestVersionId}",
@@ -745,6 +852,169 @@ private fun ModTableRow(
     }
 }
 
+/**
+ * Every pending update with the release notes of the version it would install, so a batch update
+ * can be reviewed before it is applied. Notes are fetched when the dialog opens — Modrinth's usually
+ * came with the scan already — and kept in [changelogs] for the rest of the session.
+ */
+@Composable
+private fun ChangelogDialog(
+    graph: AppGraph,
+    updates: List<Pair<ModGroup, ModFile>>,
+    changelogs: MutableMap<String, ChangelogState>,
+    scope: CoroutineScope,
+    onIgnore: (ModGroup) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    LaunchedEffect(updates) {
+        for ((group, _) in updates) {
+            val update = group.update ?: continue
+            val key = changelogKey(group, update)
+            if (changelogs[key] is ChangelogState.Loaded || changelogs[key] is ChangelogState.Loading) continue
+            changelogs[key] = ChangelogState.Loading
+            // Launched on the tab's scope rather than this effect's, so closing the dialog mid-fetch
+            // still lets the result land in the cache instead of leaving the entry stuck on Loading.
+            scope.launch {
+                changelogs[key] = try {
+                    ChangelogState.Loaded(graph.modService.changelog(update))
+                } catch (e: Exception) {
+                    ChangelogState.Failed(e.message ?: "unknown error")
+                }
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+        // Changelogs are long reads, so the dialog takes most of the window rather than a card's width.
+        modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.9f),
+        title = { Text("Changelogs (${updates.size})") },
+        text = {
+            if (updates.isEmpty()) {
+                Text("No updates pending.", style = MaterialTheme.typography.bodyMedium)
+            } else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(updates, key = { it.first.key }) { (group, file) ->
+                    val update = group.update ?: return@items
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Box(Modifier.size(ROW_ICON)) {
+                                group.iconUrl?.let { url ->
+                                    AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(ROW_ICON))
+                                }
+                            }
+                            ModSourceBadge(update.source)
+                            Text(
+                                group.displayName,
+                                Modifier.projectLink(update),
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "${file.fileName} → ${update.latestVersionName ?: update.latestVersionId}",
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            RowAction("Ignore", enabled = true) { onIgnore(group) }
+                        }
+                        when (val state = changelogs[changelogKey(group, update)]) {
+                            null, ChangelogState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                            is ChangelogState.Failed -> Text(
+                                "Could not load changelog: ${state.message}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            is ChangelogState.Loaded -> if (state.text == null) {
+                                Text(
+                                    "No changelog provided.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            } else {
+                                ChangelogMarkdown(state.text)
+                            }
+                        }
+                        HorizontalDivider(Modifier.padding(top = 4.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            OutlinedButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+/**
+ * How much of a changelog shows before it is expanded. Some mods ship their entire history as the
+ * changelog of every release, which would bury every other mod in the dialog.
+ */
+private const val CHANGELOG_PREVIEW_LINES = 100
+
+/**
+ * The first [maxLines] lines of [markdown]. A cut inside a fenced code block closes the fence, so the
+ * truncated text still renders as a code block rather than swallowing whatever follows it.
+ */
+private fun truncateMarkdown(markdown: String, maxLines: Int): String {
+    val kept = markdown.lines().take(maxLines)
+    val openFence = kept.count { it.trimStart().startsWith("```") } % 2 == 1
+    return kept.joinToString("\n") + if (openFence) "\n```" else ""
+}
+
+/**
+ * A changelog rendered as Markdown, collapsed to [CHANGELOG_PREVIEW_LINES] until expanded. Headings
+ * are scaled down from Material's defaults: a changelog's `# 1.2.0` sits under the mod's own name,
+ * and at display size it would outweigh it.
+ */
+@Composable
+private fun ChangelogMarkdown(text: String) {
+    // Saveable so the choice survives the item scrolling out of the lazy list and back.
+    var expanded by rememberSaveable(text) { mutableStateOf(false) }
+    val totalLines = remember(text) { text.lines().size }
+    val collapsible = totalLines > CHANGELOG_PREVIEW_LINES
+    val shown = remember(text, expanded) {
+        if (collapsible && !expanded) truncateMarkdown(text, CHANGELOG_PREVIEW_LINES) else text
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        SelectionContainer { MarkdownBody(shown) }
+        if (collapsible) {
+            RowAction(
+                if (expanded) "Show less" else "Show all ($totalLines lines)",
+                enabled = true,
+            ) { expanded = !expanded }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownBody(text: String) {
+    val type = MaterialTheme.typography
+    Markdown(
+        content = text,
+        imageTransformer = Coil3ImageTransformerImpl,
+        typography = markdownTypography(
+            h1 = type.titleMedium,
+            h2 = type.titleSmall,
+            h3 = type.labelLarge,
+            h4 = type.labelLarge,
+            h5 = type.labelMedium,
+            h6 = type.labelMedium,
+            text = type.bodySmall,
+            paragraph = type.bodySmall,
+            ordered = type.bodySmall,
+            bullet = type.bodySmall,
+            list = type.bodySmall,
+            code = type.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        ),
+    )
+}
 
 /**
  * A checkbox sized to fit inside a dense row. Material draws it at a fixed 20dp and reserves a 48dp

@@ -33,6 +33,8 @@ data class ModrinthVersion(
     @SerialName("date_published") val datePublished: String? = null,
     @SerialName("version_type") val versionType: String? = null,
     val dependencies: List<ModrinthDependency>? = null,
+    /** Markdown release notes, as the author wrote them. */
+    val changelog: String? = null,
 ) {
     fun publishedAtInstant(): Instant? {
         if (datePublished.isNullOrBlank()) return null

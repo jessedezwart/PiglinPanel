@@ -157,6 +157,12 @@ class ModrinthClient(
         return download(file.url)
     }
 
+    override suspend fun changelog(update: ModUpdate): String? {
+        update.changelog?.let { return it }
+        if (update.projectId == null || update.latestVersionId == null) return null
+        return fetchVersion(update.projectId, update.latestVersionId).changelog?.takeIf { it.isNotBlank() }
+    }
+
     override val source: ModSource = ModSource.MODRINTH
 
     /** Modrinth's public API needs no key. */
@@ -353,6 +359,7 @@ class ModrinthClient(
             serverSide = project?.serverSide,
             downloads = project?.downloads ?: 0,
             library = project?.isLibrary() == true,
+            changelog = latestVersion?.changelog?.takeIf { it.isNotBlank() },
         )
     }
 

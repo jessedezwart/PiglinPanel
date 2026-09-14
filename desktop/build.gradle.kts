@@ -20,6 +20,8 @@ dependencies {
     implementation(libs.filekit.dialogs.compose)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.ktor3)
+    implementation(libs.markdown.renderer.m3)
+    implementation(libs.markdown.renderer.coil3)
     implementation(libs.ktor.client.cio)
     implementation(libs.slf4j.api)
     implementation(libs.logback.classic)
