@@ -157,7 +157,11 @@ class CurseForgeClient(
      * Fingerprints CurseForge doesn't know are absent from the result; known-but-current mods map
      * to an update whose [ModUpdate.available] is false.
      */
-    override suspend fun findSuggestedUpdates(fingerprints: List<Long>): Map<Long, ModUpdate> {
+    override suspend fun findSuggestedUpdates(
+        fingerprints: List<Long>,
+        loader: String?,
+        gameVersion: String?,
+    ): Map<Long, ModUpdate> {
         val requested = fingerprints.distinct()
         if (requested.isEmpty()) {
             return emptyMap()
@@ -177,13 +181,15 @@ class CurseForgeClient(
             val fingerprint = current.fileFingerprint ?: continue
             if (fingerprint !in requested) continue
             val mod = mods[modId]
-            val loader = loaderOf(current)
-            val mcVersion = mcVersionOf(current)
+            // The profile's target wins where it has one, so every mod is measured against the
+            // same loader and Minecraft version rather than against its own current file's.
+            val targetLoader = loader?.takeIf { it.isNotBlank() } ?: loaderOf(current)
+            val mcVersion = gameVersion?.takeIf { it.isNotBlank() } ?: mcVersionOf(current)
             // The bulk /mods response already carries the newest files, so the common case needs no
             // extra request; only mods whose latestFiles hold nothing compatible are queried.
-            val latest = bestFile(mod?.latestFiles.orEmpty(), loader, mcVersion)
+            val latest = bestFile(mod?.latestFiles.orEmpty(), targetLoader, mcVersion)
                 ?: try {
-                    latestFile(modId.toString(), loader, mcVersion)
+                    latestFile(modId.toString(), targetLoader, mcVersion)
                 } catch (e: IOException) {
                     null
                 }

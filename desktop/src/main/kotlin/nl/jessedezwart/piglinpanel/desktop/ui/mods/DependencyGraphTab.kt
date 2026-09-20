@@ -277,7 +277,8 @@ private fun buildGraph(mods: List<ModFile>, labels: Map<String, String>): Graph 
     val edges = mutableListOf<Pair<Int, Int>>()
 
     enabled.forEachIndexed { index, file ->
-        for (id in file.metadata!!.requires) {
+        for (dependency in file.metadata!!.requires) {
+            val id = dependency.id
             val provider = providerOf[id]
             when {
                 provider == null -> missing[index] += id

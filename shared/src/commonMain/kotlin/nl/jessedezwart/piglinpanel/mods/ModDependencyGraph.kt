@@ -3,6 +3,24 @@ package nl.jessedezwart.piglinpanel.mods
 import nl.jessedezwart.piglinpanel.model.ModFile
 
 /**
+ * A dependency that is installed and enabled, but at a version the dependent will not accept.
+ *
+ * Kept apart from a missing dependency because the fix differs: this one needs the *other* mod
+ * moved to a different version, not a download of something absent.
+ */
+data class VersionConflict(
+    /** The id as the dependent names it. */
+    val id: String,
+    /** The range the dependent declares, verbatim, in whichever loader's syntax it wrote it. */
+    val range: String,
+    /** The version of the enabled jar providing [id]. */
+    val installed: String,
+) {
+    /** `fabric-api >=0.100.0 (have 0.92.2)`, for a table cell or a warning line. */
+    override fun toString(): String = "$id $range (have $installed)"
+}
+
+/**
  * The dependency relationships between the mods actually installed on a server, built from what the
  * jars declare rather than from a repository, so it covers mods no repository has indexed.
  *
@@ -32,7 +50,7 @@ class ModDependencyGraph private constructor(
     /** The enabled mods that declare a hard dependency on something [file] provides. */
     fun dependentsOf(file: ModFile): List<ModFile> {
         val ids = file.metadata?.ids()?.toSet() ?: return emptyList()
-        return enabled.filter { it !== file && it.declared.requires.any { id -> id in ids } }
+        return enabled.filter { it !== file && it.declared.requires.any { dep -> dep.id in ids } }
     }
 
     /**
@@ -42,7 +60,7 @@ class ModDependencyGraph private constructor(
     fun isUsed(file: ModFile): Boolean {
         val ids = file.metadata?.ids()?.toSet() ?: return false
         return enabled.any { other ->
-            other !== file && (other.declared.requires + other.declared.optional).any { it in ids }
+            other !== file && (other.declared.requires + other.declared.optional).any { it.id in ids }
         }
     }
 
@@ -55,6 +73,7 @@ class ModDependencyGraph private constructor(
         val ids = file.metadata?.ids()?.toSet() ?: return emptyList()
         return dependentsOf(file).filter { dependent ->
             dependent.metadata!!.requires
+                .map { it.id }
                 .filter { it in ids }
                 .any { id -> providersAmong(enabled, id).none { it !== file } }
         }
@@ -63,7 +82,34 @@ class ModDependencyGraph private constructor(
     /** Required ids of [file] that nothing enabled provides — the mod is broken as it stands. */
     fun missingDependenciesOf(file: ModFile): List<String> {
         val metadata = file.metadata ?: return emptyList()
-        return metadata.requires.filter { id -> providersAmong(enabled, id).isEmpty() }
+        return metadata.requires.map { it.id }.filter { id -> providersAmong(enabled, id).isEmpty() }
+    }
+
+    /**
+     * Required dependencies of [file] that are enabled but at a version its range rules out — the
+     * failure a batch of updates produces, where every id is present and the loader still refuses.
+     *
+     * Only a provider whose *own* [ModJarMetadata.modId] matches is version-checked. An id that is
+     * merely `provides`-ed, which is how a bundled library shows up, carries the host jar's version
+     * rather than the library's, and comparing a range against the wrong version would invent
+     * conflicts. Unreadable ranges and jars that declare no version count as satisfied; see
+     * [ModVersionRange].
+     */
+    fun unsatisfiedDependenciesOf(file: ModFile): List<VersionConflict> {
+        val metadata = file.metadata ?: return emptyList()
+        return metadata.requires.mapNotNull { dependency ->
+            val range = dependency.range ?: return@mapNotNull null
+            val namedProviders = providersAmong(enabled, dependency.id)
+                .filter { it !== file && it.declared.modId == dependency.id }
+            if (namedProviders.isEmpty()) return@mapNotNull null
+            if (namedProviders.any { ModVersionRange.satisfies(it.declared.version, range) }) return@mapNotNull null
+            // Every provider fell short, so any of them names the version to report; the newest is
+            // the one the user would have to move away from.
+            val installed = namedProviders.mapNotNull { it.declared.version }
+                .maxWithOrNull(ModVersionRange::compare)
+                ?: return@mapNotNull null
+            VersionConflict(dependency.id, range, installed)
+        }
     }
 
     /**
@@ -76,7 +122,7 @@ class ModDependencyGraph private constructor(
     fun disabledDependenciesOf(file: ModFile): List<ModFile> {
         val resolved = LinkedHashMap<String, ModFile>()
         val satisfied = enabled.flatMap { it.declared.ids() }.toMutableSet()
-        val queue = ArrayDeque(file.metadata?.requires.orEmpty())
+        val queue = ArrayDeque(file.metadata?.requires.orEmpty().map { it.id })
         val seen = mutableSetOf<String>()
 
         while (queue.isNotEmpty()) {
@@ -91,7 +137,7 @@ class ModDependencyGraph private constructor(
                 ?: continue
             if (resolved.put(candidate.relativePath, candidate) == null) {
                 satisfied += candidate.declared.ids()
-                queue.addAll(candidate.declared.requires)
+                queue.addAll(candidate.declared.requires.map { it.id })
             }
         }
         return resolved.values.toList()

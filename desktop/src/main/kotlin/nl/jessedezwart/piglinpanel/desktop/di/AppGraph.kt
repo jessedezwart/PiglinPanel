@@ -23,12 +23,14 @@ import nl.jessedezwart.piglinpanel.mods.ModCompatibilityService
 import nl.jessedezwart.piglinpanel.mods.ModHashStore
 import nl.jessedezwart.piglinpanel.mods.ModHasher
 import nl.jessedezwart.piglinpanel.mods.ModService
+import nl.jessedezwart.piglinpanel.mods.ModUpdatePlanner
 import nl.jessedezwart.piglinpanel.nbt.QuerzNbtCodec
 import nl.jessedezwart.piglinpanel.rcon.RconConfigResolver
 import nl.jessedezwart.piglinpanel.rcon.RconService
 import nl.jessedezwart.piglinpanel.search.ModInstallService
 import nl.jessedezwart.piglinpanel.search.ModSearchService
 import nl.jessedezwart.piglinpanel.search.ModSearchSource
+import nl.jessedezwart.piglinpanel.ssh.SshConnectionPool
 import nl.jessedezwart.piglinpanel.status.ServerStatusService
 import nl.jessedezwart.piglinpanel.sysinfo.SystemInfoService
 import okio.FileSystem
@@ -36,7 +38,10 @@ import okio.FileSystem
 class AppGraph {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    val fileSystems: ServerFileSystemProvider = DefaultServerFileSystemProvider
+    /** One SSH connection per server, shared by everything that talks to it. */
+    private val sshConnections = SshConnectionPool()
+
+    val fileSystems: ServerFileSystemProvider = DefaultServerFileSystemProvider(sshConnections)
 
     private val configDir = piglinpanelConfigDir()
 
@@ -76,17 +81,19 @@ class AppGraph {
         path = configDir / "mod-hashes.json",
     )
     val modService = ModService(fileSystems, modrinthClient, ModHasher(modHashStore), curseForgeClient)
+    val modUpdatePlanner = ModUpdatePlanner(modService)
     val modInstallService = ModInstallService(modService, searchSources)
     val modCompatibilityService = ModCompatibilityService(searchSources)
     val fileService = FileService(fileSystems, QuerzNbtCodec())
     val logService = LogService(fileService)
     val rconService = RconService()
     val statusService = ServerStatusService()
-    val systemInfoService = SystemInfoService()
-    val serverControlService = ServerControlService(SshShell())
+    val systemInfoService = SystemInfoService(sshConnections)
+    val serverControlService = ServerControlService(SshShell(sshConnections))
 
     fun shutdown() {
         scope.cancel()
         httpClient.close()
+        sshConnections.close()
     }
 }

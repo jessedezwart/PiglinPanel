@@ -10,6 +10,19 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
+ * One entry of a jar's dependency list: the id it names, and the versions of it that will do.
+ *
+ * The range is kept verbatim rather than parsed here, because each loader writes its own syntax
+ * and only [ModVersionRange] needs to tell them apart. A null range means the manifest named the
+ * id without qualifying it, which every loader reads as "any version".
+ */
+@Serializable
+data class ModDependencyRef(
+    val id: String,
+    val range: String? = null,
+)
+
+/**
  * What a mod jar says about itself: the id the loader knows it by, and the ids it needs present.
  *
  * This comes from the jar's own manifest rather than from Modrinth/CurseForge, because the loader
@@ -24,10 +37,10 @@ data class ModJarMetadata(
     val version: String? = null,
     /** Ids this jar satisfies besides [modId], e.g. Fabric API's `fabric`. */
     val provides: List<String> = emptyList(),
-    /** Ids the loader refuses to start without. */
-    val requires: List<String> = emptyList(),
+    /** Ids the loader refuses to start without, with the versions of each that satisfy it. */
+    val requires: List<ModDependencyRef> = emptyList(),
     /** Ids this mod can use but does not need. */
-    val optional: List<String> = emptyList(),
+    val optional: List<ModDependencyRef> = emptyList(),
     /** Where the jar says it runs; [ModSide.UNKNOWN] when it says nothing. */
     val side: ModSide = ModSide.UNKNOWN,
     /**
@@ -162,7 +175,17 @@ object ModJarMetadataReader {
             .filter { it.isNotEmpty() && it !in PROVIDED_BY_PLATFORM }
             .distinct()
 
-    /** `fabric.mod.json`: `depends`/`suggests` are objects keyed by mod id. */
+    /**
+     * The same filtering for dependency entries. Where a manifest names one id twice — Forge files
+     * that repeat a dependency per side do — the first range wins, since a second entry qualifying
+     * the same id is a claim this cannot combine without inventing a syntax for it.
+     */
+    private fun sanitizeDeps(deps: Iterable<ModDependencyRef>): List<ModDependencyRef> =
+        deps.map { it.copy(id = it.id.trim().lowercase(), range = it.range?.trim()?.takeIf { r -> r.isNotEmpty() }) }
+            .filter { it.id.isNotEmpty() && it.id !in PROVIDED_BY_PLATFORM }
+            .distinctBy { it.id }
+
+    /** `fabric.mod.json`: `depends`/`suggests` are objects keyed by mod id, valued by version range. */
     private fun parseFabric(bytes: ByteArray): ModJarMetadata? {
         val root = parseJsonObject(bytes) ?: return null
         val modId = root.string("id") ?: return null
@@ -171,8 +194,8 @@ object ModJarMetadataReader {
             name = root.string("name"),
             version = root.string("version"),
             provides = sanitize(root.stringList("provides")),
-            requires = sanitize(root.objectKeys("depends")),
-            optional = sanitize(root.objectKeys("suggests") + root.objectKeys("recommends")),
+            requires = sanitizeDeps(root.dependencyObject("depends")),
+            optional = sanitizeDeps(root.dependencyObject("suggests") + root.dependencyObject("recommends")),
             side = environment(root.string("environment")),
             library = hasLibraryBadge((root["custom"] as? JsonObject)?.get("modmenu")),
         )
@@ -216,9 +239,9 @@ object ModJarMetadataReader {
             modId = modId.lowercase(),
             name = (loader["metadata"] as? JsonObject)?.string("name"),
             version = loader.string("version"),
-            provides = sanitize(loader.dependencyArray("provides").map { it.first }),
-            requires = sanitize(depends.filterNot { it.second }.map { it.first }),
-            optional = sanitize(depends.filter { it.second }.map { it.first }),
+            provides = sanitize(loader.dependencyArray("provides").map { it.first.id }),
+            requires = sanitizeDeps(depends.filterNot { it.second }.map { it.first }),
+            optional = sanitizeDeps(depends.filter { it.second }.map { it.first }),
             side = environment((root["minecraft"] as? JsonObject)?.string("environment")),
             // Quilt puts custom sections at the root of the file rather than under `custom`.
             library = hasLibraryBadge(root["modmenu"]),
@@ -238,18 +261,35 @@ object ModJarMetadataReader {
     private fun JsonObject.stringList(key: String): List<String> =
         (this[key] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
 
-    private fun JsonObject.objectKeys(key: String): List<String> =
-        (this[key] as? JsonObject)?.keys?.toList().orEmpty()
+    /**
+     * A Fabric dependency table: `{"fabric-api": ">=0.92.0"}`, where the value may also be an
+     * array of predicates. An array means "any of these will do", which is what `||` says in the
+     * syntax [ModVersionRange] reads, so the alternatives are joined with it.
+     */
+    private fun JsonObject.dependencyObject(key: String): List<ModDependencyRef> =
+        (this[key] as? JsonObject)?.map { (id, value) -> ModDependencyRef(id, versionRange(value)) }.orEmpty()
 
-    /** Quilt entries are either a bare id string or an object with `id` and an `optional` flag. */
-    private fun JsonObject.dependencyArray(key: String): List<Pair<String, Boolean>> =
+    /** A version range written either as one predicate or as a list of alternatives. */
+    private fun versionRange(value: JsonElement?): String? = when (value) {
+        is JsonPrimitive -> value.content.takeIf { it.isNotBlank() }
+        is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.content?.takeIf(String::isNotBlank) }
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString(" || ")
+        else -> null
+    }
+
+    /**
+     * Quilt entries are either a bare id string or an object with `id`, a `versions` range and an
+     * `optional` flag.
+     */
+    private fun JsonObject.dependencyArray(key: String): List<Pair<ModDependencyRef, Boolean>> =
         (this[key] as? JsonArray).orEmpty().mapNotNull { element ->
             when (element) {
-                is JsonPrimitive -> element.content to false
+                is JsonPrimitive -> ModDependencyRef(element.content) to false
                 is JsonObject -> {
                     val id = element.string("id") ?: return@mapNotNull null
                     val optional = (element["optional"] as? JsonPrimitive)?.content == "true"
-                    id to optional
+                    ModDependencyRef(id, versionRange(element["versions"])) to optional
                 }
                 else -> null
             }
@@ -269,8 +309,8 @@ object ModJarMetadataReader {
         val providedIds = mutableListOf<String>()
         var name: String? = null
         var version: String? = null
-        val required = mutableListOf<String>()
-        val optional = mutableListOf<String>()
+        val required = mutableListOf<ModDependencyRef>()
+        val optional = mutableListOf<ModDependencyRef>()
 
         var inMods = false
         var inDependencies = false
@@ -278,6 +318,7 @@ object ModJarMetadataReader {
         var dependencyId: String? = null
         var dependencyRequired = true
         var dependencySide: String? = null
+        var dependencyRange: String? = null
 
         // What the file states outright, and what its own platform dependency implies.
         var modsSide: String? = null
@@ -297,10 +338,12 @@ object ModJarMetadataReader {
                     else -> ModSide.UNKNOWN
                 }
             }
-            if (dependencyRequired) required += id else optional += id
+            val dependency = ModDependencyRef(id, dependencyRange)
+            if (dependencyRequired) required += dependency else optional += dependency
             dependencyId = null
             dependencyRequired = true
             dependencySide = null
+            dependencyRange = null
         }
 
         for (raw in bytes.text().lineSequence()) {
@@ -334,6 +377,7 @@ object ModJarMetadataReader {
                 inDependencies && key == "mandatory" -> dependencyRequired = value.equals("true", ignoreCase = true)
                 inDependencies && key == "type" -> dependencyRequired = value.equals("required", ignoreCase = true)
                 inDependencies && key == "side" -> dependencySide = value
+                inDependencies && key == "versionrange" -> dependencyRange = value
                 // NeoForge's outright statements of side. `side` on the mod itself is the newest
                 // and most specific of them; `clientSideOnly` is written both at the root of the
                 // file and inside the mod's own table, so both places are read.
@@ -355,8 +399,8 @@ object ModJarMetadataReader {
             provides = (ids.drop(1) + sanitize(providedIds)).distinct() - id,
             // A jar declaring several mods also declares their dependencies on each other; those
             // are satisfied from within, so they are not requirements of the jar as a whole.
-            requires = sanitize(required) - ids.toSet(),
-            optional = sanitize(optional) - ids.toSet(),
+            requires = sanitizeDeps(required).filterNot { it.id in ids },
+            optional = sanitizeDeps(optional).filterNot { it.id in ids },
             side = modSide(modsSide, declaredSide, platformSide),
         )
     }

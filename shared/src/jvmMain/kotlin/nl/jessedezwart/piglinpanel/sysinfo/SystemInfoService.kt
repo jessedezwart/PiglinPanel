@@ -12,7 +12,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import nl.jessedezwart.piglinpanel.model.AccessType
 import nl.jessedezwart.piglinpanel.model.ServerProfile
-import nl.jessedezwart.piglinpanel.ssh.SshClient
+import nl.jessedezwart.piglinpanel.ssh.SshConnectionPool
 import okio.IOException
 
 data class Metrics(
@@ -52,7 +52,7 @@ data class Specs(
  * local servers, via SSH for remote ones) and CIM/WMI through PowerShell on Windows (local servers
  * only). No third-party system-info libraries are involved.
  */
-class SystemInfoService {
+class SystemInfoService(private val ssh: SshConnectionPool) {
     companion object {
         private const val COMMAND_TIMEOUT_SECONDS = 12L
 
@@ -219,7 +219,7 @@ class SystemInfoService {
     // --- Command execution ---------------------------------------------------
 
     private suspend fun runSsh(profile: ServerProfile, command: String): String =
-        SshClient.connect(profile).use { client ->
+        ssh.withSession(profile) { client ->
             val result = client.exec(command)
             result.throwIfFailed()
             result.stdoutText()

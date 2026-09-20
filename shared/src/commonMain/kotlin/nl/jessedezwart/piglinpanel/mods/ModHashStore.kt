@@ -28,9 +28,10 @@ class ModHashStore(
          * which entries written before it lack — leaving them cached would leave every mod
          * unlabelled until its file changed. Version 6 reads whether a jar calls itself a library;
          * version 7 reads the `provides` aliases in `mods.toml`; version 8 keys entries by loader and
-         * reads a merged jar through that loader's manifest.
+         * reads a merged jar through that loader's manifest. Version 9 keeps the version range
+         * beside each dependency id, which changes the shape of the stored metadata.
          */
-        const val FORMAT_VERSION = 8
+        const val FORMAT_VERSION = 9
     }
 
     @Serializable

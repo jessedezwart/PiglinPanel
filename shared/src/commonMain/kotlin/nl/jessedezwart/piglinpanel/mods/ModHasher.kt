@@ -1,7 +1,9 @@
 package nl.jessedezwart.piglinpanel.mods
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import nl.jessedezwart.piglinpanel.cache.SuspendCache
 import nl.jessedezwart.piglinpanel.curseforge.CurseForgeFingerprint
 import nl.jessedezwart.piglinpanel.fs.ServerFileSystem
@@ -48,11 +50,16 @@ class ModHasher(private val store: ModHashStore? = null) {
         restore()
         return cache.getOrPut(cacheKey(profile, entry)) {
             val bytes = fileSystem.readBytes(entry.path)
-            val hashes = ModFileHashes(
-                sha1 = bytes.toByteString().sha1().hex(),
-                fingerprint = CurseForgeFingerprint.of(bytes),
-                metadata = ModJarMetadataReader.read(bytes, profile.modLoader),
-            )
+            // Two hashes and a zip walk over every byte of the jar. Callers reach this from a UI
+            // coroutine, where doing that inline would freeze the window for the length of a scan,
+            // and would pin the work of a whole mod folder to one thread.
+            val hashes = withContext(Dispatchers.Default) {
+                ModFileHashes(
+                    sha1 = bytes.toByteString().sha1().hex(),
+                    fingerprint = CurseForgeFingerprint.of(bytes),
+                    metadata = ModJarMetadataReader.read(bytes, profile.modLoader),
+                )
+            }
             stateLock.withLock { unsaved++ }
             hashes
         }

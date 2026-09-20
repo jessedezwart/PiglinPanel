@@ -1,12 +1,12 @@
 package nl.jessedezwart.piglinpanel.control
 
 import nl.jessedezwart.piglinpanel.model.ServerProfile
-import nl.jessedezwart.piglinpanel.ssh.SshClient
+import nl.jessedezwart.piglinpanel.ssh.SshConnectionPool
 
-/** Runs the start script over SSH, one connection per run. */
-class SshShell : RemoteShell {
+/** Runs the start script over SSH, on the shared connection to the server. */
+class SshShell(private val ssh: SshConnectionPool) : RemoteShell {
     override suspend fun run(profile: ServerProfile, script: String): ShellResult =
-        SshClient.connect(profile).use { client ->
+        ssh.withSession(profile) { client ->
             val result = client.exec(script)
             ShellResult(result.exitCode, result.stdoutText(), result.stderrText())
         }

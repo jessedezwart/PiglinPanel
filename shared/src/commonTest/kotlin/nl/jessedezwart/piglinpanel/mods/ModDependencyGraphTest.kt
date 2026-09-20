@@ -11,6 +11,8 @@ class ModDependencyGraphTest {
         requires: List<String> = emptyList(),
         provides: List<String> = emptyList(),
         archived: Boolean = false,
+        version: String? = null,
+        ranges: Map<String, String> = emptyMap(),
     ): ModFile {
         val fileName = if (archived) "$modId.jar.disabled" else "$modId.jar"
         return ModFile(
@@ -23,7 +25,12 @@ class ModDependencyGraphTest {
             archived = archived,
             sha1 = null,
             update = null,
-            metadata = ModJarMetadata(modId = modId, requires = requires, provides = provides),
+            metadata = ModJarMetadata(
+                modId = modId,
+                version = version,
+                requires = requires.map { ModDependencyRef(it, ranges[it]) },
+                provides = provides,
+            ),
         )
     }
 
@@ -129,5 +136,43 @@ class ModDependencyGraphTest {
         // It cannot depend on anything it never declared, and nothing can depend on it.
         assertTrue(graph.dependentsOf(api).isEmpty())
         assertTrue(graph.missingDependenciesOf(unreadable).isEmpty())
+    }
+
+    @Test
+    fun reportsADependencyThatIsPresentButTooOld() {
+        val api = mod("fabric-api", version = "0.92.2")
+        val sodium = mod("sodium", requires = listOf("fabric-api"), ranges = mapOf("fabric-api" to ">=0.100.0"))
+
+        val conflicts = ModDependencyGraph.of(listOf(api, sodium)).unsatisfiedDependenciesOf(sodium)
+
+        assertEquals(listOf(VersionConflict("fabric-api", ">=0.100.0", "0.92.2")), conflicts)
+        // The id is present, so it is not also reported as missing.
+        assertEquals(emptyList(), ModDependencyGraph.of(listOf(api, sodium)).missingDependenciesOf(sodium))
+    }
+
+    @Test
+    fun acceptsADependencyInsideItsRange() {
+        val api = mod("fabric-api", version = "0.110.5+1.21.1")
+        val sodium = mod("sodium", requires = listOf("fabric-api"), ranges = mapOf("fabric-api" to ">=0.100.0"))
+
+        assertEquals(emptyList(), ModDependencyGraph.of(listOf(api, sodium)).unsatisfiedDependenciesOf(sodium))
+    }
+
+    @Test
+    fun staysQuietWhenTheProviderOnlyBundlesTheId() {
+        // The host jar's version says nothing about the version of the library inside it, so a
+        // range check against it would be a guess dressed up as a failure.
+        val host = mod("connector", provides = listOf("fabric-api"), version = "1.0.0")
+        val sodium = mod("sodium", requires = listOf("fabric-api"), ranges = mapOf("fabric-api" to ">=0.100.0"))
+
+        assertEquals(emptyList(), ModDependencyGraph.of(listOf(host, sodium)).unsatisfiedDependenciesOf(sodium))
+    }
+
+    @Test
+    fun staysQuietWhenTheProviderDeclaresNoVersion() {
+        val api = mod("fabric-api", version = null)
+        val sodium = mod("sodium", requires = listOf("fabric-api"), ranges = mapOf("fabric-api" to ">=0.100.0"))
+
+        assertEquals(emptyList(), ModDependencyGraph.of(listOf(api, sodium)).unsatisfiedDependenciesOf(sodium))
     }
 }

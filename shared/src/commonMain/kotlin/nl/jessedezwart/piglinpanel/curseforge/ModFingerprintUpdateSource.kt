@@ -10,7 +10,12 @@ interface ModFingerprintUpdateSource {
     /** False when no API key is configured, in which case lookups are skipped entirely. */
     val available: Boolean
 
-    suspend fun findSuggestedUpdates(fingerprints: List<Long>): Map<Long, ModUpdate>
+    /** [loader] and [gameVersion] pin the target; see [nl.jessedezwart.piglinpanel.modrinth.ModUpdateSource]. */
+    suspend fun findSuggestedUpdates(
+        fingerprints: List<Long>,
+        loader: String? = null,
+        gameVersion: String? = null,
+    ): Map<Long, ModUpdate>
 
     suspend fun downloadUpdate(update: ModUpdate): ByteArray
 

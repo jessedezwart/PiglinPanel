@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -78,8 +79,11 @@ import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.model.formatDownloads
 import nl.jessedezwart.piglinpanel.model.formatSize
 import nl.jessedezwart.piglinpanel.model.ServerProfile
+import nl.jessedezwart.piglinpanel.mods.AppliedUpdate
 import nl.jessedezwart.piglinpanel.mods.ModSide
+import nl.jessedezwart.piglinpanel.mods.PlannedUpdate
 import nl.jessedezwart.piglinpanel.mods.ScanProgress
+import nl.jessedezwart.piglinpanel.mods.UpdatePlan
 import nl.jessedezwart.piglinpanel.search.ModSource
 
 /** The size Material always draws a checkbox at, regardless of the size it is laid out in. */
@@ -146,7 +150,83 @@ private fun Modifier.projectLink(update: ModUpdate?, enabled: Boolean = true): M
     return handCursor().clickable(enabled = enabled) { uriHandler.openUri(url) }
 }
 
-/** Whether the user chose to skip the exact update [group] is currently offering. */
+/**
+ * What a planned batch would do, shown when some of it would break the pack.
+ *
+ * The safe updates are offered on their own because that is almost always the right answer: a
+ * batch of thirty where two conflict should still install twenty-eight. Applying everything stays
+ * available, since the planner reads ranges mod authors do sometimes get wrong.
+ */
+@Composable
+private fun UpdatePlanDialog(
+    plan: UpdatePlan,
+    onApply: (List<PlannedUpdate>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val blocked = plan.blocked
+    val failed = plan.failed
+    val safe = plan.safe
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Apply ${safe.size} of ${plan.entries.size} updates?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (blocked.isNotEmpty()) {
+                    Text(
+                        "These updates would break the dependency chain:",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    SelectionContainer {
+                        Text(
+                            blocked.joinToString("\n") { entry ->
+                                "  • ${entry.displayName} — ${entry.problems.joinToString("; ")}"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                if (failed.isNotEmpty()) {
+                    Text("These could not be downloaded:", style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer {
+                        Text(
+                            failed.joinToString("\n") { "  • ${it.displayName} — ${it.failure}" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+                Text(
+                    if (safe.isEmpty()) {
+                        "Nothing in this batch is safe to apply."
+                    } else {
+                        "The other ${safe.size} can be applied as they are."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onApply(safe) }, enabled = safe.isNotEmpty()) {
+                Text("Apply ${safe.size} safe")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(
+                    // The download failures are left out: there is nothing to write for them.
+                    onClick = { onApply(safe + blocked) },
+                    enabled = blocked.isNotEmpty(),
+                ) {
+                    Text("Apply all anyway")
+                }
+                OutlinedButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+    )
+}
+
+/** Whether the user chose to skip the exact update [ModGroup.update] is currently offering. */
 private fun ModGroup.updateIgnored(profile: ServerProfile): Boolean {
     val latest = update?.latestVersionId ?: return false
     return profile.ignoredUpdates[key] == latest
@@ -208,30 +288,89 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
         }
     }
 
+    /** A planned batch waiting on the user, because applying it as-is would break something. */
+    var pendingPlan by remember(profile.id) { mutableStateOf<UpdatePlan?>(null) }
+
+    fun revert(applied: List<AppliedUpdate>) {
+        launchTask("Revert") {
+            // Newest first, so a mod updated twice in one batch unwinds in the order it was done.
+            applied.reversed().forEach { graph.modService.revertUpdate(profile, it) }
+            scan(checkUpdates = true, forceRefresh = false)
+            notify("Reverted ${applied.size} mod(s)")
+        }
+    }
+
+    /**
+     * Writes an already-downloaded batch. Not a task of its own, so the planner can run straight
+     * into it without waiting for the UI to go idle in between.
+     */
+    suspend fun applyEntries(entries: List<PlannedUpdate>) {
+        val applied = mutableListOf<AppliedUpdate>()
+        val failures = mutableListOf<String>()
+        entries.forEachIndexed { index, entry ->
+            progress = ScanProgress("updating", index, entries.size, entry.displayName)
+            val bytes = entry.bytes
+            if (bytes == null) {
+                failures += entry.displayName
+                return@forEachIndexed
+            }
+            try {
+                applied += graph.modService.applyUpdate(profile, entry.file, bytes)
+            } catch (e: Exception) {
+                failures += entry.displayName
+            }
+        }
+        progress = null
+        scan(checkUpdates = true, forceRefresh = false)
+
+        val message = if (failures.isEmpty()) {
+            "Updated ${applied.size} mod(s)"
+        } else {
+            "Updated ${applied.size} mod(s); ${failures.size} failed: ${failures.joinToString()}"
+        }
+        // Offered rather than announced: the jars this replaced are still on disk, disabled, and
+        // putting them back is the one thing a bad batch needs and the log will not give you.
+        scope.launch {
+            val result = snackbar.showSnackbar(
+                message = message,
+                actionLabel = "Revert".takeIf { applied.isNotEmpty() },
+            )
+            if (result == SnackbarResult.ActionPerformed) revert(applied)
+        }
+    }
+
+    /**
+     * Downloads every selected update and checks what the pack would look like with all of them in
+     * place before writing any of them; see [nl.jessedezwart.piglinpanel.mods.ModUpdatePlanner].
+     */
     fun applyUpdates(targets: List<Pair<ModGroup, ModFile>>) {
         if (targets.isEmpty()) return
         launchTask("Update") {
-            var updated = 0
-            val failures = mutableListOf<String>()
-            targets.forEachIndexed { index, (group, mod) ->
-                progress = ScanProgress("updating", index, targets.size, group.displayName)
-                try {
-                    graph.modService.applyUpdate(profile, mod)
-                    updated++
-                } catch (e: Exception) {
-                    failures += group.displayName
-                }
+            val names = targets.associate { (group, mod) -> mod.relativePath to group.displayName }
+            val plan = graph.modUpdatePlanner.plan(profile, mods, targets.map { it.second }, names) { p ->
+                progress = ScanProgress("downloading", p.done, p.total, p.displayName)
             }
             progress = null
-            notify(
-                if (failures.isEmpty()) {
-                    "Updated $updated mod(s)"
-                } else {
-                    "Updated $updated mod(s); ${failures.size} failed: ${failures.joinToString()}"
-                },
-            )
-            scan(checkUpdates = true, forceRefresh = false)
+            if (plan.blocked.isEmpty() && plan.failed.isEmpty()) {
+                applyEntries(plan.safe)
+            } else {
+                pendingPlan = plan
+            }
         }
+    }
+
+    fun applyPlanned(entries: List<PlannedUpdate>) {
+        pendingPlan = null
+        if (entries.isEmpty()) return
+        launchTask("Update") { applyEntries(entries) }
+    }
+
+    pendingPlan?.let { plan ->
+        UpdatePlanDialog(
+            plan = plan,
+            onApply = ::applyPlanned,
+            onDismiss = { pendingPlan = null },
+        )
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -517,6 +656,7 @@ private fun InstalledModsTab(
                     when (p.phase) {
                         "hashing" -> "Hashing ${p.done}/${p.total}: ${p.fileName ?: ""}"
                         "updating" -> "Updating ${p.done + 1}/${p.total}: ${p.fileName ?: ""}"
+                        "downloading" -> "Checking ${p.done}/${p.total}: ${p.fileName ?: ""}"
                         else -> "Looking up updates for ${p.total} mods…"
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -557,12 +697,9 @@ private fun InstalledModsTab(
                     onToggleSelected = {
                         if (!selected.add(row.group.key)) selected.remove(row.group.key)
                     },
-                    onApplyUpdate = { mod ->
-                        mutate("Update", true) {
-                            graph.modService.applyUpdate(profile, mod)
-                            notify("Updated ${row.group.displayName}")
-                        }
-                    },
+                    // Through the same planner as a batch: a single update can strand a dependent
+                    // just as well, and one mod is the cheapest possible plan.
+                    onApplyUpdate = { mod -> applyUpdates(listOf(row.group to mod)) },
                     // These rescans check updates: renaming a jar does not change its bytes, so the
                     // hashes and the update lookups both come straight from cache. Scanning without
                     // them would drop every mod's project identity and shatter the table into one
@@ -748,6 +885,8 @@ private fun ModTableRow(
                 val problems = listOfNotNull(
                     group.missingDependencies.takeIf { it.isNotEmpty() }
                         ?.let { "missing ${it.joinToString(", ")}" },
+                    group.versionConflicts.takeIf { it.isNotEmpty() }
+                        ?.let { "needs ${it.joinToString(", ")}" },
                     group.disabledDependencies.takeIf { it.isNotEmpty() }
                         ?.let { "disabled ${it.joinToString(", ")}" },
                 )

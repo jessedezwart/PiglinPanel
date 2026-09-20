@@ -8,6 +8,16 @@ import nl.jessedezwart.piglinpanel.model.ServerProfile
  * implementations must reject paths that escape it.
  */
 interface ServerFileSystem {
+    /**
+     * How many reads this transport is willing to have in flight at once.
+     *
+     * Bulk work — hashing a mod folder above all — is bounded by per-read latency rather than by
+     * bandwidth, so overlapping reads is most of the speed available. The ceiling belongs to the
+     * transport because only it knows what a burst costs: a remote one may pay a handshake per
+     * read and be throttled for asking too fast.
+     */
+    val readConcurrency: Int get() = 1
+
     /** Lists the direct children of [relativePath]; empty if the directory does not exist. */
     suspend fun list(relativePath: String): List<FileEntry>
 

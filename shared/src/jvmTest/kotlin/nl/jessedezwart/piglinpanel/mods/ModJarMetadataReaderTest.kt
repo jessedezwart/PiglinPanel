@@ -46,8 +46,8 @@ class ModJarMetadataReaderTest {
         assertEquals("Sodium", metadata.name)
         assertEquals("0.5.8", metadata.version)
         // minecraft/java/fabricloader come from the platform, not from a jar in the mods folder.
-        assertEquals(listOf("fabric-api"), metadata.requires)
-        assertEquals(listOf("iris"), metadata.optional)
+        assertEquals(listOf("fabric-api"), metadata.requires.map { it.id })
+        assertEquals(listOf("iris"), metadata.optional.map { it.id })
     }
 
     @Test
@@ -125,8 +125,8 @@ class ModJarMetadataReaderTest {
 
         assertEquals("examplemod", metadata.modId)
         assertEquals("Example Mod", metadata.name)
-        assertEquals(listOf("quilted_fabric_api"), metadata.requires)
-        assertEquals(listOf("modmenu"), metadata.optional)
+        assertEquals(listOf("quilted_fabric_api"), metadata.requires.map { it.id })
+        assertEquals(listOf("modmenu"), metadata.optional.map { it.id })
     }
 
     @Test
@@ -157,8 +157,8 @@ class ModJarMetadataReaderTest {
 
         assertEquals("jei", metadata.modId)
         assertEquals("Just Enough Items", metadata.name)
-        assertEquals(listOf("patchouli"), metadata.requires)
-        assertEquals(listOf("curios"), metadata.optional)
+        assertEquals(listOf("patchouli"), metadata.requires.map { it.id })
+        assertEquals(listOf("curios"), metadata.optional.map { it.id })
     }
 
     @Test
@@ -181,8 +181,8 @@ class ModJarMetadataReaderTest {
             "META-INF/neoforge.mods.toml" to "[[mods]]\nmodId = \"collective\"\n",
         )
 
-        assertEquals(emptyList(), ModJarMetadataReader.read(merged, loader = "neoforge")!!.requires)
-        assertEquals(listOf("fabric-api"), ModJarMetadataReader.read(merged, loader = "fabric")!!.requires)
+        assertEquals(emptyList(), ModJarMetadataReader.read(merged, loader = "neoforge")!!.requires.map { it.id })
+        assertEquals(listOf("fabric-api"), ModJarMetadataReader.read(merged, loader = "fabric")!!.requires.map { it.id })
     }
 
     @Test
@@ -261,7 +261,7 @@ class ModJarMetadataReaderTest {
         assertEquals("simulated", metadata.modId)
         assertEquals(listOf("simulated_extras"), metadata.provides)
         // The second mod's dependency on the first is satisfied inside the same jar.
-        assertEquals(emptyList(), metadata.requires)
+        assertEquals(emptyList(), metadata.requires.map { it.id })
     }
 
     @Test
@@ -445,5 +445,65 @@ class ModJarMetadataReaderTest {
         )!!
 
         assertEquals(ModSide.BOTH, metadata.side)
+    }
+
+    @Test
+    fun keepsTheVersionRangeEachLoaderWritesBesideADependency() {
+        val fabric = ModJarMetadataReader.read(
+            jar(
+                "fabric.mod.json" to """
+                {
+                  "id": "sodium",
+                  "depends": { "fabric-api": ">=0.100.0", "minecraft": "1.21.1", "cloth-config": ["~1.2", "^3.0"] }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(
+            listOf(ModDependencyRef("fabric-api", ">=0.100.0"), ModDependencyRef("cloth-config", "~1.2 || ^3.0")),
+            fabric.requires,
+        )
+
+        val quilt = ModJarMetadataReader.read(
+            jar(
+                "quilt.mod.json" to """
+                {
+                  "quilt_loader": {
+                    "id": "examplemod",
+                    "depends": [ { "id": "quilted_fabric_api", "versions": ">=7.0.0" } ]
+                  }
+                }
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(listOf(ModDependencyRef("quilted_fabric_api", ">=7.0.0")), quilt.requires)
+
+        val neoForge = ModJarMetadataReader.read(
+            jar(
+                "META-INF/neoforge.mods.toml" to """
+                [[mods]]
+                    modId = "jei"
+                [[dependencies.jei]]
+                    modId = "patchouli"
+                    type = "required"
+                    versionRange = "[1.21.1-87,)"
+                """.trimIndent(),
+            ),
+        )!!
+
+        assertEquals(listOf(ModDependencyRef("patchouli", "[1.21.1-87,)")), neoForge.requires)
+    }
+
+    @Test
+    fun leavesTheRangeNullWhenADependencyIsNamedWithoutOne() {
+        val metadata = ModJarMetadataReader.read(
+            jar("fabric.mod.json" to """{ "id": "a", "depends": { "b": "*" }, "suggests": { "c": "" } }"""),
+        )!!
+
+        // `*` is kept verbatim; ModVersionRange reads it as "any". An empty string carries nothing.
+        assertEquals(listOf(ModDependencyRef("b", "*")), metadata.requires)
+        assertEquals(listOf(ModDependencyRef("c", null)), metadata.optional)
     }
 }

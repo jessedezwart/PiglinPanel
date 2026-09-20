@@ -4,6 +4,7 @@ import kotlin.math.roundToLong
 import kotlin.time.Instant
 import nl.jessedezwart.piglinpanel.mods.ModJarMetadata
 import nl.jessedezwart.piglinpanel.mods.ModSide
+import nl.jessedezwart.piglinpanel.mods.VersionConflict
 import nl.jessedezwart.piglinpanel.search.ModSource
 
 data class ModFile(
@@ -59,6 +60,12 @@ data class ModGroup(
     val modifiedAt: Instant? = null,
     /** Required mod ids that no enabled jar provides — this mod will not load as things stand. */
     val missingDependencies: List<String> = emptyList(),
+    /**
+     * Dependencies that are installed and enabled but at a version this mod's range rules out.
+     * The characteristic damage of a large batch of updates: nothing is missing, and the loader
+     * still refuses to start.
+     */
+    val versionConflicts: List<VersionConflict> = emptyList(),
     /**
      * Names of dependencies that are installed but disabled. Separate from [missingDependencies]
      * because the fix is a click, not a download — but still the user's click to make.

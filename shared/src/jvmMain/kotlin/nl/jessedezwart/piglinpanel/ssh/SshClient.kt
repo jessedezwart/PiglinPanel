@@ -17,7 +17,7 @@ import okio.IOException
  * Host keys are checked against `~/.ssh/known_hosts` with the same trust-on-first-use rule as
  * OpenSSH's `StrictHostKeyChecking=accept-new` — see [AcceptNewHostKeyVerifier].
  */
-class SshClient private constructor(private val ssh: SSHClient) : AutoCloseable {
+class SshClient private constructor(private val ssh: SSHClient) : SshSession {
     companion object {
         private const val CONNECT_TIMEOUT_MS = 15_000
 
@@ -68,26 +68,23 @@ class SshClient private constructor(private val ssh: SSHClient) : AutoCloseable 
         }
     }
 
-    data class CommandResult(val exitCode: Int, val stdout: ByteArray, val stderr: ByteArray) {
-        fun stdoutText(): String = stdout.decodeToString()
+    override val isConnected: Boolean get() = ssh.isConnected
 
-        fun stderrText(): String = stderr.decodeToString()
-
-        fun throwIfFailed() {
-            if (exitCode != 0) {
-                val error = stderrText()
-                throw IOException(error.ifBlank { "Remote command failed with exit $exitCode" })
-            }
-        }
-    }
-
-    suspend fun exec(command: String): CommandResult = withContext(Dispatchers.IO) {
+    override suspend fun exec(command: String): CommandResult = withContext(Dispatchers.IO) {
         runCommand(command) { }
     }
 
-    /** Runs [command] feeding [bytes] to its stdin; throws with stderr text on non-zero exit. */
-    suspend fun writeToCommand(command: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
-        val result = runCommand(command) { it.outputStream.use { stdin -> stdin.write(bytes) } }
+    override suspend fun writeToCommand(command: String, bytes: ByteArray): Unit = withContext(Dispatchers.IO) {
+        val result = runCommand(command) {
+            it.outputStream.use { stdin ->
+                stdin.write(bytes)
+                // Closing is not enough to get the last packet out. sshj flushes on close without
+                // waiting for the remote window to reopen, and throws away whatever is still
+                // buffered when it has not — then sends EOF anyway, so the far end sees a clean
+                // end of stream and a short file. Flushing explicitly blocks for the window.
+                stdin.flush()
+            }
+        }
         if (result.exitCode != 0) {
             throw IOException(result.stderrText().ifBlank { "Remote command failed with exit ${result.exitCode}" })
         }

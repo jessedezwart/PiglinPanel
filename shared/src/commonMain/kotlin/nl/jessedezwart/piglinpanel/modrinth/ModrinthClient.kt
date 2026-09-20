@@ -72,7 +72,11 @@ class ModrinthClient(
      * absent from the result; known-but-current mods map to an update whose [ModUpdate.available]
      * is false.
      */
-    override suspend fun findSuggestedUpdates(sha1s: List<String>): Map<String, ModUpdate> {
+    override suspend fun findSuggestedUpdates(
+        sha1s: List<String>,
+        loader: String?,
+        gameVersion: String?,
+    ): Map<String, ModUpdate> {
         val requestedHashes = sha1s.filter { it.isNotBlank() }.distinct()
         if (requestedHashes.isEmpty()) {
             return emptyMap()
@@ -84,9 +88,11 @@ class ModrinthClient(
         val projects = getProjects(projectIds)
 
         // Group hashes by their update criteria so one bulk call per loader/game-version set.
+        // With the profile's loader and version known this collapses to a single group, which is
+        // the point: every mod is then asked about against the same target.
         val hashesByCriteria = LinkedHashMap<UpdateCriteria, MutableList<String>>()
         for ((hash, version) in currentVersions) {
-            hashesByCriteria.getOrPut(UpdateCriteria.from(version)) { mutableListOf() }.add(hash)
+            hashesByCriteria.getOrPut(UpdateCriteria.from(version, loader, gameVersion)) { mutableListOf() }.add(hash)
         }
 
         val latestVersions = LinkedHashMap<String, ModrinthVersion>()
@@ -413,9 +419,18 @@ class ModrinthClient(
 
     private data class UpdateCriteria(val loaders: List<String>, val gameVersions: List<String>) {
         companion object {
-            fun from(version: ModrinthVersion): UpdateCriteria = UpdateCriteria(
-                loaders = version.loaders?.takeIf { it.isNotEmpty() } ?: listOf("neoforge"),
-                gameVersions = version.gameVersions ?: emptyList(),
+            /**
+             * What the profile states wins; the file's own publication targets fill in whatever it
+             * leaves unsaid, which is the best guess available for a profile that has not been
+             * told which Minecraft version it runs.
+             */
+            fun from(version: ModrinthVersion, loader: String?, gameVersion: String?): UpdateCriteria = UpdateCriteria(
+                loaders = loader?.takeIf { it.isNotBlank() }?.let { listOf(it) }
+                    ?: version.loaders?.takeIf { it.isNotEmpty() }
+                    ?: listOf("neoforge"),
+                gameVersions = gameVersion?.takeIf { it.isNotBlank() }?.let { listOf(it) }
+                    ?: version.gameVersions
+                    ?: emptyList(),
             )
         }
     }

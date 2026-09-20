@@ -4,7 +4,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.test.runTest
 import nl.jessedezwart.piglinpanel.curseforge.CurseForgeFingerprint
 import nl.jessedezwart.piglinpanel.curseforge.ModFingerprintUpdateSource
@@ -28,7 +32,7 @@ private class FakeModrinth(
     var lookupCalls = 0
         private set
 
-    override suspend fun findSuggestedUpdates(sha1s: List<String>): Map<String, ModUpdate> {
+    override suspend fun findSuggestedUpdates(sha1s: List<String>, loader: String?, gameVersion: String?): Map<String, ModUpdate> {
         lookupCalls++
         return updates.filterKeys { it in sha1s }
     }
@@ -45,7 +49,7 @@ private class FakeCurseForge(
     var requestedFingerprints: List<Long> = emptyList()
         private set
 
-    override suspend fun findSuggestedUpdates(fingerprints: List<Long>): Map<Long, ModUpdate> {
+    override suspend fun findSuggestedUpdates(fingerprints: List<Long>, loader: String?, gameVersion: String?): Map<Long, ModUpdate> {
         lookupCalls++
         requestedFingerprints = fingerprints
         return updates.filterKeys { it in fingerprints }
@@ -330,6 +334,36 @@ class ModServiceTest {
     }
 
     @Test
+    fun revertPutsBackTheVersionAnUpdateReplaced() = runTest {
+        fs.put("mods/old.jar", byteArrayOf(1, 2, 3))
+        val mod = ModFile("mods", "mods", "mods", "mods/old.jar", "old.jar", 3, false, HASH_123, update())
+        val service = service(FakeModrinth())
+
+        val applied = service.applyUpdate(ServerProfile(), mod)
+        service.revertUpdate(ServerProfile(), applied)
+
+        assertTrue("mods/mod.jar" !in fs.files)
+        assertTrue("mods/old.jar.disabled" !in fs.files)
+        assertEquals(listOf<Byte>(1, 2, 3), fs.files["mods/old.jar"]?.toList())
+    }
+
+    @Test
+    fun revertReusesTheNameTheUpdateTookWhenItKeptTheFileName() = runTest {
+        // The update ships a jar called the same thing, so the old one was archived under
+        // `mod.jar.disabled` and the new one took `mod.jar`. Reverting has to free that name first.
+        fs.put("mods/mod.jar", byteArrayOf(1, 2, 3))
+        val mod = ModFile("mods", "mods", "mods", "mods/mod.jar", "mod.jar", 3, false, HASH_123, update())
+        val service = service(FakeModrinth())
+
+        val applied = service.applyUpdate(ServerProfile(), mod)
+        assertEquals("mods/mod.jar.disabled", applied.archivedPath)
+        service.revertUpdate(ServerProfile(), applied)
+
+        assertEquals(listOf<Byte>(1, 2, 3), fs.files["mods/mod.jar"]?.toList())
+        assertTrue("mods/mod.jar.disabled" !in fs.files)
+    }
+
+    @Test
     fun theJarsOwnSideWinsOverTheRepositorys() {
         // Modrinth calls Auth Me client-supported and server-supported; the jar says client-only,
         // and the loader is the one that enforces it.
@@ -360,10 +394,10 @@ class ModServiceTest {
             .copy(metadata = ModJarMetadata(modId = "geckolib"))
         // Only a disabled mod needs it, which does not count: a disabled jar loads nothing.
         val disabledUser = modFile("mods/mobs.jar.disabled", archived = true)
-            .copy(metadata = ModJarMetadata(modId = "mobs", requires = listOf("geckolib")))
+            .copy(metadata = ModJarMetadata(modId = "mobs", requires = listOf(ModDependencyRef("geckolib"))))
         val unreadable = modFile("mods/mystery-lib.jar", archived = false, update = library.copy(projectId = "mystery"))
         val user = modFile("mods/create.jar", archived = false)
-            .copy(metadata = ModJarMetadata(modId = "create", requires = listOf("architectury"), optional = listOf("jei")))
+            .copy(metadata = ModJarMetadata(modId = "create", requires = listOf(ModDependencyRef("architectury")), optional = listOf(ModDependencyRef("jei"))))
 
         val unused = service().group(listOf(used, optionallyUsed, orphan, disabledUser, unreadable, user))
             .filter { it.unusedLibrary }
@@ -384,5 +418,39 @@ class ModServiceTest {
         val mod = modFile("mods/mystery.jar", archived = false)
 
         assertEquals(ModSide.UNKNOWN, mod.side)
+    }
+
+    @Test
+    fun readsSeveralJarsAtOnceUpToWhatTheTransportAllows() = runTest(timeout = 10.seconds) {
+        repeat(8) { fs.put("mods/mod$it.jar", byteArrayOf(it.toByte())) }
+        fs.readConcurrency = 4
+        // Every read parks until four of them are open together, so a scan that read one file at
+        // a time could never finish this: the overlap is proven by the test completing at all.
+        val fourAreOpen = CompletableDeferred<Unit>()
+        var waiting = 0
+        val gate = Mutex()
+        fs.onRead = {
+            val open = gate.withLock { ++waiting }
+            if (open % 4 == 0) fourAreOpen.complete(Unit)
+            fourAreOpen.await()
+        }
+
+        service().scan(ServerProfile(), checkUpdates = true)
+
+        assertEquals(4, fs.peakConcurrentReads)
+    }
+
+    @Test
+    fun countsHashingProgressOneStepAtATimeThoughReadsFinishOutOfOrder() = runTest {
+        repeat(5) { fs.put("mods/mod$it.jar", byteArrayOf(it.toByte())) }
+        fs.readConcurrency = 3
+        val steps = mutableListOf<Int>()
+
+        service().scan(ServerProfile(), checkUpdates = true) { p ->
+            if (p.phase == "hashing") steps += p.done
+        }
+
+        assertEquals((1..5).toList(), steps)
+        assertEquals(5, steps.size)
     }
 }

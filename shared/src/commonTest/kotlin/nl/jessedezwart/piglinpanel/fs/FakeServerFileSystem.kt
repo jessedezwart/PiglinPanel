@@ -1,6 +1,8 @@
 package nl.jessedezwart.piglinpanel.fs
 
 import kotlin.time.Instant
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import nl.jessedezwart.piglinpanel.model.FileEntry
 import okio.IOException
 
@@ -10,6 +12,19 @@ class FakeServerFileSystem : ServerFileSystem {
     val modifiedAt = HashMap<String, Instant>()
     var readCount = 0
         private set
+
+    /** Left at one so tests see reads in a fixed order unless they opt into overlapping them. */
+    override var readConcurrency: Int = 1
+
+    /** The most reads ever open at once, so a test can show a caller really did overlap them. */
+    var peakConcurrentReads = 0
+        private set
+
+    /** Runs inside [readBytes] before it answers, to hold a read open while others arrive. */
+    var onRead: (suspend () -> Unit)? = null
+
+    private val readLock = Mutex()
+    private var openReads = 0
 
     fun put(path: String, bytes: ByteArray, modified: Instant = Instant.fromEpochMilliseconds(1_000)) {
         files[path] = bytes
@@ -38,8 +53,17 @@ class FakeServerFileSystem : ServerFileSystem {
     }
 
     override suspend fun readBytes(relativePath: String): ByteArray {
-        readCount++
-        return files[relativePath] ?: throw IOException("No such file: $relativePath")
+        readLock.withLock {
+            readCount++
+            openReads++
+            peakConcurrentReads = maxOf(peakConcurrentReads, openReads)
+        }
+        try {
+            onRead?.invoke()
+            return files[relativePath] ?: throw IOException("No such file: $relativePath")
+        } finally {
+            readLock.withLock { openReads-- }
+        }
     }
 
     override suspend fun writeBytes(relativePath: String, bytes: ByteArray) {

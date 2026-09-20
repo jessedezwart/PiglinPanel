@@ -16,7 +16,7 @@ import nl.jessedezwart.piglinpanel.mods.ModService
 private const val HASH_123 = "7037807198c22a7d2b0807371d763779a84fdfcf"
 
 private class FakeModUpdateSource(private val updates: Map<String, ModUpdate> = emptyMap()) : ModUpdateSource {
-    override suspend fun findSuggestedUpdates(sha1s: List<String>): Map<String, ModUpdate> =
+    override suspend fun findSuggestedUpdates(sha1s: List<String>, loader: String?, gameVersion: String?): Map<String, ModUpdate> =
         updates.filterKeys { it in sha1s }
 
     override suspend fun downloadUpdate(update: ModUpdate): ByteArray = byteArrayOf()

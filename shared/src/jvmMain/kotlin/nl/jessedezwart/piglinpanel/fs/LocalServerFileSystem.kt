@@ -16,6 +16,9 @@ class LocalServerFileSystem(
 ) : ServerFileSystem {
     private val root: Path = profile.rootPath.toPath(normalize = true)
 
+    /** A local disk has no handshake to pay and reorders queued reads itself. */
+    override val readConcurrency: Int get() = 8
+
     override suspend fun list(relativePath: String): List<FileEntry> = withContext(Dispatchers.IO) {
         val path = resolve(relativePath)
         if (!fileSystem.exists(path)) {

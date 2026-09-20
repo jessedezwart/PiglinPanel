@@ -92,6 +92,7 @@ class ModrinthClientTest {
                     updateRequests += mapOf(
                         "hashes" to body["hashes"]!!.jsonArray.map { it.jsonPrimitive.content },
                         "loaders" to body["loaders"]!!.jsonArray.map { it.jsonPrimitive.content },
+                        "game_versions" to body["game_versions"]!!.jsonArray.map { it.jsonPrimitive.content },
                     )
                     respond(
                         """
@@ -134,6 +135,15 @@ class ModrinthClientTest {
 
         // Unknown hash: absent entirely.
         assertTrue("hash-unknown" !in updates)
+
+        // Told what the server runs, the same pack resolves against one target in one request,
+        // so no mod can be offered an update for a different Minecraft version than its neighbours.
+        updateRequests.clear()
+        client.findSuggestedUpdates(listOf("hash-fabric", "hash-noloader"), loader = "neoforge", gameVersion = "1.21.1")
+
+        assertEquals(1, updateRequests.size)
+        assertEquals(listOf("neoforge"), updateRequests.single()["loaders"])
+        assertEquals(listOf("1.21.1"), updateRequests.single()["game_versions"])
     }
 
     @Test
