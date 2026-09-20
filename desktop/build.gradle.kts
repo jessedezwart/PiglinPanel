@@ -42,6 +42,7 @@ compose.desktop {
 
             windows {
                 menu = true
+                iconFile.set(project.file("src/main/resources/icon.ico"))
                 upgradeUuid = "6f5f3a52-9c1e-4b8a-b7a4-2f45f6f9d3a1"
             }
         }

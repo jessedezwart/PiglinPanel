@@ -2,6 +2,7 @@ package nl.jessedezwart.piglinpanel.desktop
 
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.remember
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -35,6 +36,7 @@ fun main() = application {
             exitApplication()
         },
         title = "Piglin Panel",
+        icon = painterResource("icon.png"),
         state = rememberWindowState(size = DpSize(1280.dp, 800.dp)),
     ) {
         PiglinTheme {
