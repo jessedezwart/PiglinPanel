@@ -65,14 +65,39 @@ fun RconScreen(graph: AppGraph, profile: ServerProfile) {
         }
     }
 
+    fun activate() {
+        if (busy) return
+        busy = true
+        scope.launch {
+            try {
+                val activated = graph.registry.activateRcon(profile)
+                scrollback += RconLine(
+                    "RCON enabled on port ${activated.rcon.port} with a generated password. " +
+                        "Restart the server for it to take effect.",
+                    isCommand = false,
+                )
+            } catch (e: Exception) {
+                scrollback += RconLine("Could not activate RCON: ${e.message}", isCommand = false, isError = true)
+            } finally {
+                busy = false
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!profile.rcon.enabled) {
             Card {
-                Text(
-                    "RCON is not enabled for this server (enable-rcon in server.properties).",
+                Row(
                     Modifier.padding(12.dp),
-                    color = MaterialTheme.colorScheme.error,
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        "RCON is not enabled for this server (enable-rcon in server.properties).",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Button(onClick = ::activate, enabled = !busy) { Text("Activate RCON") }
+                }
             }
         }
         Card(Modifier.weight(1f).fillMaxWidth()) {

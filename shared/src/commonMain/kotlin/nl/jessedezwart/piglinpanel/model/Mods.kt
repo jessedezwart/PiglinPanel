@@ -2,11 +2,13 @@ package nl.jessedezwart.piglinpanel.model
 
 import kotlin.math.roundToLong
 import kotlin.time.Instant
+import kotlinx.serialization.Serializable
 import nl.jessedezwart.piglinpanel.mods.ModJarMetadata
 import nl.jessedezwart.piglinpanel.mods.ModSide
 import nl.jessedezwart.piglinpanel.mods.VersionConflict
 import nl.jessedezwart.piglinpanel.search.ModSource
 
+@Serializable
 data class ModFile(
     val folderId: String,
     val folderName: String,
@@ -81,6 +83,7 @@ data class ModGroup(
     val unusedLibrary: Boolean = false,
 )
 
+@Serializable
 data class ModUpdate(
     val projectId: String?,
     val projectName: String?,

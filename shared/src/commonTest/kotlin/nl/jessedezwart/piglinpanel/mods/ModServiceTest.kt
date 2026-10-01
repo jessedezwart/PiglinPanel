@@ -19,6 +19,8 @@ import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.modrinth.ModUpdateSource
 import nl.jessedezwart.piglinpanel.search.ModSource
+import okio.Path.Companion.toPath
+import okio.fakefilesystem.FakeFileSystem
 
 // SHA-1 of bytes [1, 2, 3]
 private const val HASH_123 = "7037807198c22a7d2b0807371d763779a84fdfcf"
@@ -221,6 +223,67 @@ class ModServiceTest {
         service.scan(profile, checkUpdates = true, forceRefresh = true)
 
         assertEquals(2, modrinth.lookupCalls)
+    }
+
+    @Test
+    fun listingAfterRestartKeepsWhatTheLastScanLearnedWithoutReadingOrLookingUp() = runTest {
+        fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
+        val profile = ServerProfile()
+        val disk = FakeFileSystem()
+        fun restarted(modrinth: ModUpdateSource) = ModService(
+            { fs },
+            modrinth,
+            ModHasher(ModHashStore(disk, "/config/mod-hashes.json".toPath())),
+            modListStore = ModListStore(disk, "/config/mod-list.json".toPath()),
+        )
+        restarted(FakeModrinth(mapOf(HASH_123 to update()))).scan(profile, checkUpdates = true)
+
+        val offline = FakeModrinth()
+        val service = restarted(offline)
+        assertEquals("2.0.0", service.lastKnown(profile).single().update?.latestVersionName)
+        val mods = service.scan(profile, checkUpdates = false)
+
+        assertEquals("2.0.0", mods.single().update?.latestVersionName)
+        assertEquals(setOf(ModSource.MODRINTH), mods.single().sources)
+        assertEquals(1, fs.readCount)
+        assertEquals(0, offline.lookupCalls)
+    }
+
+    @Test
+    fun listingDropsRemovedJarsAndForgetsWhatWasKnownAboutChangedOnes() = runTest {
+        fs.put("mods/kept.jar", byteArrayOf(1, 2, 3))
+        fs.put("mods/removed.jar", byteArrayOf(4, 5, 6))
+        val profile = ServerProfile()
+        val service = ModService(
+            { fs },
+            FakeModrinth(mapOf(HASH_123 to update())),
+            ModHasher(),
+            modListStore = ModListStore(FakeFileSystem(), "/config/mod-list.json".toPath()),
+        )
+        service.scan(profile, checkUpdates = true)
+
+        fs.delete("mods/removed.jar")
+        fs.put("mods/kept.jar", byteArrayOf(7, 8, 9, 10), modified = Instant.fromEpochMilliseconds(9_000))
+        val mods = service.scan(profile, checkUpdates = false)
+
+        assertEquals(listOf("kept.jar"), mods.map { it.fileName })
+        assertEquals(null, mods.single().update)
+        assertEquals(listOf("kept.jar"), service.lastKnown(profile).map { it.fileName })
+    }
+
+    @Test
+    fun lastKnownListIsNotReusedForAnotherMinecraftVersion() = runTest {
+        fs.put("mods/server.jar", byteArrayOf(1, 2, 3))
+        val service = ModService(
+            { fs },
+            FakeModrinth(mapOf(HASH_123 to update())),
+            ModHasher(),
+            modListStore = ModListStore(FakeFileSystem(), "/config/mod-list.json".toPath()),
+        )
+        val profile = ServerProfile(mcVersion = "1.21.1")
+        service.scan(profile, checkUpdates = true)
+
+        assertTrue(service.lastKnown(profile.copy(mcVersion = "1.21.4")).isEmpty())
     }
 
     @Test

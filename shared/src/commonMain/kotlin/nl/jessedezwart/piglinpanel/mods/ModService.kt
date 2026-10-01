@@ -43,6 +43,7 @@ class ModService(
     private val modrinthClient: ModUpdateSource,
     private val modHasher: ModHasher,
     private val curseForgeClient: ModFingerprintUpdateSource? = null,
+    private val modListStore: ModListStore? = null,
 ) {
     companion object {
         private const val DISABLED_SUFFIX = ".disabled"
@@ -90,6 +91,18 @@ class ModService(
 
     private val updatesCache = SuspendCache<String, ModUpdate>(ttl = 24.hours, maxEntries = 1000)
 
+    /**
+     * The mod list as the last [scan] of [profile] left it, without contacting the server. Something
+     * to show while the folders are listed; a jar that has since been removed is still in it.
+     */
+    suspend fun lastKnown(profile: ServerProfile): List<ModFile> =
+        modListStore?.load(profile.id, updateTarget(profile)).orEmpty()
+
+    /**
+     * Lists the mod folders of [profile]. With [checkUpdates] every new or changed jar is read and
+     * the repositories are asked about all of them; without it nothing is read, and a jar keeps what
+     * earlier scans learned about it for as long as its name, size and modification time still match.
+     */
     suspend fun scan(
         profile: ServerProfile,
         checkUpdates: Boolean,
@@ -151,6 +164,11 @@ class ModService(
             }.awaitAll()
         }
 
+        // What the repositories said about each jar last time, by content hash. It fills the list in
+        // when no lookup is made, and stands in for a lookup that fails; a jar that changed has a
+        // new hash (or, unread, none) and so starts from nothing.
+        val known = lastKnown(profile).filter { it.sha1 != null }.associateBy { it.sha1 }
+
         val mods = ArrayList<ModFile>(candidates.size)
         val lookupHashesByPath = LinkedHashMap<String, ModFileHashes>()
         for ((index, candidate) in candidates.withIndex()) {
@@ -169,9 +187,10 @@ class ModService(
                 size = entry.size,
                 archived = entry.name.endsWith(DISABLED_SUFFIX),
                 sha1 = sha1,
-                update = null,
+                update = known[sha1]?.update,
                 metadata = hashes?.metadata,
                 modifiedAt = entry.modifiedAt,
+                sources = known[sha1]?.sources.orEmpty(),
             )
         }
 
@@ -184,8 +203,16 @@ class ModService(
             progress?.invoke(ScanProgress("lookup", 0, lookupHashesByPath.size, null))
             applySuggestedUpdates(profile, mods, lookupHashesByPath, forceRefresh)
         }
+        modListStore?.save(profile.id, updateTarget(profile), mods)
         return mods
     }
+
+    /**
+     * The loader and Minecraft version updates are resolved against: the same jar has a different
+     * newest version depending on which Minecraft version it is being asked about.
+     */
+    private fun updateTarget(profile: ServerProfile): String =
+        "${profile.modLoader.orEmpty()}:${profile.mcVersion.orEmpty()}"
 
     suspend fun upload(profile: ServerProfile, folder: ModFolder, fileName: String, bytes: ByteArray) {
         fileSystems.fileSystem(profile).writeBytes(joinPath(folder.path, fileName), bytes)
@@ -422,9 +449,7 @@ class ModService(
     ) {
         val loader = profile.modLoader
         val gameVersion = profile.mcVersion
-        // The target is part of the key: the same jar has a different newest version depending on
-        // which Minecraft version it is being asked about.
-        val target = "${loader.orEmpty()}:${gameVersion.orEmpty()}"
+        val target = updateTarget(profile)
         val resolved = LinkedHashMap<String, ModUpdate>()
 
         val missingSha1s = mutableListOf<String>()
@@ -485,9 +510,14 @@ class ModService(
             val applied = (modrinth ?: curse)?.let { it.copy(library = it.library || curse?.library == true) }
             mods[i] = mod.copy(
                 update = applied ?: mod.update,
-                sources = buildSet {
-                    if (modrinth != null) add(ModSource.MODRINTH)
-                    if (curse != null) add(ModSource.CURSEFORGE)
+                // Neither answering usually means the lookup failed, so what was known stays.
+                sources = if (modrinth == null && curse == null) {
+                    mod.sources
+                } else {
+                    buildSet {
+                        if (modrinth != null) add(ModSource.MODRINTH)
+                        if (curse != null) add(ModSource.CURSEFORGE)
+                    }
                 },
             )
         }

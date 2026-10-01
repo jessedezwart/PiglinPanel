@@ -23,6 +23,7 @@ import nl.jessedezwart.piglinpanel.modrinth.createHttpClient
 import nl.jessedezwart.piglinpanel.mods.ModCompatibilityService
 import nl.jessedezwart.piglinpanel.mods.ModHashStore
 import nl.jessedezwart.piglinpanel.mods.ModHasher
+import nl.jessedezwart.piglinpanel.mods.ModListStore
 import nl.jessedezwart.piglinpanel.mods.ModService
 import nl.jessedezwart.piglinpanel.mods.ModUpdatePlanner
 import nl.jessedezwart.piglinpanel.nbt.QuerzNbtCodec
@@ -81,7 +82,17 @@ class AppGraph {
         fileSystem = FileSystem.SYSTEM,
         path = configDir / "mod-hashes.json",
     )
-    val modService = ModService(fileSystems, modrinthClient, ModHasher(modHashStore), curseForgeClient)
+    private val modListStore = ModListStore(
+        fileSystem = FileSystem.SYSTEM,
+        path = configDir / "mod-list.json",
+    )
+    val modService = ModService(
+        fileSystems,
+        modrinthClient,
+        ModHasher(modHashStore),
+        curseForgeClient,
+        modListStore,
+    )
     val modUpdatePlanner = ModUpdatePlanner(modService)
     val modInstallService = ModInstallService(modService, searchSources)
     val modCompatibilityService = ModCompatibilityService(searchSources)

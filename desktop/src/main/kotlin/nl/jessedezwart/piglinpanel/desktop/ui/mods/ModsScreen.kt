@@ -1,5 +1,6 @@
 package nl.jessedezwart.piglinpanel.desktop.ui.mods
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -256,7 +257,9 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
 
     suspend fun scan(checkUpdates: Boolean, forceRefresh: Boolean) {
         progress = null
-        val scanned = graph.modService.scan(profile, checkUpdates, forceRefresh) { p -> progress = p }
+        // Only a scan that reads jars is worth a progress bar; a listing is over before it draws.
+        val onProgress: ((ScanProgress) -> Unit)? = if (checkUpdates) { p -> progress = p } else null
+        val scanned = graph.modService.scan(profile, checkUpdates, forceRefresh, onProgress)
         mods = scanned
         groups = graph.modService.group(scanned)
     }
@@ -278,7 +281,18 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
     }
 
     fun rescan(checkUpdates: Boolean, forceRefresh: Boolean = false) {
-        launchTask("Scan") { scan(checkUpdates, forceRefresh) }
+        launchTask("Update check") { scan(checkUpdates, forceRefresh) }
+    }
+
+    // The list of the last scan is shown straight away, then checked against the folders as they
+    // are now: removed jars drop out, and new or changed ones show bare until updates are checked.
+    LaunchedEffect(profile.id) {
+        val known = graph.modService.lastKnown(profile)
+        if (mods.isEmpty() && known.isNotEmpty()) {
+            mods = known
+            groups = graph.modService.group(known)
+        }
+        launchTask("Listing mods") { scan(checkUpdates = false, forceRefresh = false) }
     }
 
     val mutate: Mutation = { label, checkUpdatesAfter, block ->
@@ -558,7 +572,10 @@ private fun InstalledModsTab(
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = { rescan(true, false) }, enabled = !busy) {
-                Text(if (task == "Scan") "Scanning…" else "Scan & check updates")
+                Text(if (task == "Update check") "Checking…" else "Check updates")
+            }
+            OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
+                Text("Force refresh")
             }
             if (updatable.isNotEmpty()) {
                 RowCheckbox(
@@ -588,13 +605,7 @@ private fun InstalledModsTab(
             OutlinedButton(onClick = { showChangelogs = true }, enabled = updatable.isNotEmpty()) {
                 Text("Changelogs")
             }
-            OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
-                Text("Force refresh")
-            }
-            OutlinedButton(onClick = { rescan(false, false) }, enabled = !busy) {
-                Text("Quick scan")
-            }
-            if (busy && task != "Scan") {
+            if (busy && task != "Update check") {
                 Text("$task…", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -669,7 +680,7 @@ private fun InstalledModsTab(
         }
         if (groups.isEmpty() && !busy) {
             Text(
-                "No mods scanned yet. Run a scan to list mods.",
+                "No mods found in this server's mod folders.",
                 style = MaterialTheme.typography.bodyMedium,
             )
         } else if (rows.isEmpty() && !busy) {
@@ -844,7 +855,18 @@ private fun ModTableRow(
     val hasUpdate = row.active && update != null && update.available()
 
     Row(
-        Modifier.fillMaxWidth().height(ROW_HEIGHT),
+        Modifier
+            .fillMaxWidth()
+            .height(ROW_HEIGHT)
+            // A step up from the window background, enough to pick the updatable rows out of a
+            // long table without competing with the gold of the update button.
+            .then(
+                if (hasUpdate && !ignored) {
+                    Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
+                } else {
+                    Modifier
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -1095,7 +1117,7 @@ private fun ChangelogDialog(
  * How much of a changelog shows before it is expanded. Some mods ship their entire history as the
  * changelog of every release, which would bury every other mod in the dialog.
  */
-private const val CHANGELOG_PREVIEW_LINES = 100
+private const val CHANGELOG_PREVIEW_LINES = 20
 
 /**
  * The first [maxLines] lines of [markdown]. A cut inside a fenced code block closes the fence, so the

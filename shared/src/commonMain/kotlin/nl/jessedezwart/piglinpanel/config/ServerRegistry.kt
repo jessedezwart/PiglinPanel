@@ -36,6 +36,16 @@ class ServerRegistry(
         return refreshed
     }
 
+    /**
+     * Switches RCON on in the server's `server.properties` with a generated password, and persists
+     * the profile with the settings that were written. Throws when the file cannot be changed.
+     */
+    suspend fun activateRcon(profile: ServerProfile): ServerProfile {
+        val activated = rconConfigResolver.activate(profile)
+        replaceProfile(activated)
+        return activated
+    }
+
     suspend fun updateCurseforgeApiKey(key: String) {
         update { it.copy(curseforgeApiKey = key) }
     }

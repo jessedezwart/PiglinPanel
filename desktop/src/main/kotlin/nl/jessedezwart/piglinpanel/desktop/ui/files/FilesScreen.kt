@@ -71,6 +71,8 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
     var entries by remember(profile.id) { mutableStateOf<List<FileEntry>>(emptyList()) }
     var openFile by remember(profile.id) { mutableStateOf<FileEntry?>(null) }
     var editorText by remember(profile.id) { mutableStateOf("") }
+    // What is on disk for the open file, so Save can stay disabled until the editor differs from it.
+    var savedText by remember(profile.id) { mutableStateOf("") }
     var editorError by remember { mutableStateOf<String?>(null) }
     var renaming by remember { mutableStateOf<FileEntry?>(null) }
     var deleting by remember { mutableStateOf<FileEntry?>(null) }
@@ -108,6 +110,7 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
                     is FileContent.Binary -> refuse("${entry.name} is a binary file and cannot be edited here.")
                     is FileContent.Text -> {
                         editorText = content.value
+                        savedText = content.value
                         editorError = null
                         openFile = entry
                     }
@@ -120,13 +123,15 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
 
     fun save() {
         val file = openFile ?: return
+        val text = editorText
         scope.launch {
             try {
                 if (NbtFiles.isNbtExtension(file.path)) {
-                    graph.fileService.saveNbt(profile, file.path, editorText)
+                    graph.fileService.saveNbt(profile, file.path, text)
                 } else {
-                    graph.fileService.saveText(profile, file.path, editorText)
+                    graph.fileService.saveText(profile, file.path, text)
                 }
+                if (openFile?.path == file.path) savedText = text
                 snackbar.showSnackbar("Saved ${file.name}")
                 reloadKey++
             } catch (e: Exception) {
@@ -158,7 +163,7 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
                         else -> {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(file.path, style = MaterialTheme.typography.titleSmall)
-                                Button(onClick = ::save, enabled = editorError == null) { Text("Save") }
+                                Button(onClick = ::save, enabled = editorError == null && editorText != savedText) { Text("Save") }
                             }
                             editorError?.let {
                                 Text(it, color = MaterialTheme.colorScheme.error)
