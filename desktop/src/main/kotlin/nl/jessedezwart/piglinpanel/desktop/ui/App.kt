@@ -49,6 +49,7 @@ import nl.jessedezwart.piglinpanel.desktop.ui.common.DropdownMenuItem
 import nl.jessedezwart.piglinpanel.desktop.ui.common.NavigationRailItem
 import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
 import nl.jessedezwart.piglinpanel.desktop.ui.settings.SettingsScreen
+import nl.jessedezwart.piglinpanel.desktop.ui.update.UpdateBanner
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 
 enum class Screen(val label: String, val icon: ImageVector) {
@@ -82,6 +83,14 @@ fun App(graph: AppGraph) {
                 }
             }
             Column(Modifier.fillMaxSize().padding(16.dp)) {
+                UpdateBanner(
+                    updater = graph.appUpdater,
+                    onInstall = {
+                        graph.shutdown()
+                        graph.appUpdater.installAndRestart()
+                    },
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
                 ProfileSelector(graph, selected, onManageServers = { screen = Screen.Settings })
                 Box(Modifier.fillMaxSize().padding(top = 12.dp)) {
                     when (screen) {

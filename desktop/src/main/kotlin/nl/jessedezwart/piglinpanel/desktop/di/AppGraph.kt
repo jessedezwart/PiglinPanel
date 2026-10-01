@@ -12,6 +12,7 @@ import nl.jessedezwart.piglinpanel.config.piglinpanelConfigDir
 import nl.jessedezwart.piglinpanel.control.ServerControlService
 import nl.jessedezwart.piglinpanel.control.SshShell
 import nl.jessedezwart.piglinpanel.curseforge.CurseForgeClient
+import nl.jessedezwart.piglinpanel.desktop.update.AppUpdater
 import nl.jessedezwart.piglinpanel.env.ServerEnvironmentResolver
 import nl.jessedezwart.piglinpanel.fs.DefaultServerFileSystemProvider
 import nl.jessedezwart.piglinpanel.fs.FileService
@@ -90,6 +91,7 @@ class AppGraph {
     val statusService = ServerStatusService()
     val systemInfoService = SystemInfoService(sshConnections)
     val serverControlService = ServerControlService(SshShell(sshConnections))
+    val appUpdater = AppUpdater(scope)
 
     fun shutdown() {
         scope.cancel()

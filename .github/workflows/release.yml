@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One release at a time, in push order: the version comes from the run number, and the updater
+# only ever moves forward.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Bump the major.minor here; the patch number is the workflow run number.
+  RELEASE_VERSION: v1.0.${{ github.run_number }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Potassium
+        uses: sproctor/potassium/.github/actions/setup-potassium@v0.6.1
+        with:
+          java-version: '21'
+
+      - name: Test and package
+        shell: bash
+        run: ./gradlew :shared:jvmTest :desktop:packageDistributionForCurrentOS --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets-${{ runner.os }}-amd64
+          path: |
+            desktop/build/potassium/binaries/**/*.exe
+            desktop/build/potassium/binaries/**/*.deb
+            desktop/build/potassium/binaries/**/*.blockmap
+            desktop/build/potassium/binaries/**/latest*.yml
+            !desktop/build/potassium/binaries/**/app/**
+            !desktop/build/potassium/binaries/**/runtime/**
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: release-assets-*
+
+      # Created as a draft so the release only becomes "latest" once every installer and update
+      # manifest is on it; installed apps poll releases/latest and must never see a half-filled one.
+      - name: Create draft release
+        run: |
+          if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
+            gh release create "$RELEASE_VERSION" --draft --target "$GITHUB_SHA" \
+              --title "$RELEASE_VERSION" --generate-notes
+          fi
+
+      - name: Upload installers and update manifests
+        uses: sproctor/potassium/.github/actions/publish-github-release@v0.6.1
+        with:
+          artifacts-path: artifacts
+          tag: ${{ env.RELEASE_VERSION }}
+
+      - name: Publish release
+        run: gh release edit "$RELEASE_VERSION" --draft=false --latest

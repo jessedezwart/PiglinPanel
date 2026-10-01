@@ -46,10 +46,16 @@ Any JDK 17+ works to launch Gradle; the build provisions its own JDK 21 toolchai
 ## Packaging
 
 ```sh
-./gradlew :desktop:createDistributable   # self-contained app image (no installer)
-./gradlew :desktop:packageMsi            # Windows installer (requires WiX Toolset 3.x)
-./gradlew :desktop:packageDeb            # Debian package (on Linux)
+./gradlew :desktop:createDistributable               # self-contained app image (no installer)
+./gradlew :desktop:packageDistributionForCurrentOS   # installer: NSIS .exe on Windows, .deb on Linux
 ```
 
-MSI/EXE packaging needs the WiX Toolset on PATH: `winget install WiXToolset.WiXToolset`.
-Installers bundle a Java runtime, so end users don't need Java installed.
+Packaging uses [Potassium](https://github.com/sproctor/potassium), which needs Node.js 18+ on PATH
+to build installers. Installers bundle a Java runtime, so end users don't need Java installed.
+
+## Releases and updates
+
+Every push to `main` runs `.github/workflows/release.yml`: it runs the tests, builds the Windows and
+Linux installers, and publishes them as GitHub release `v1.0.<run number>` (bump the major.minor in
+the workflow file). An installed copy checks the latest release on startup and offers to download
+and install a newer one; a copy started with `./gradlew :desktop:run` never does.
