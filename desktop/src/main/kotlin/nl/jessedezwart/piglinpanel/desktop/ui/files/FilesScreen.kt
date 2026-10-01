@@ -1,5 +1,10 @@
 package nl.jessedezwart.piglinpanel.desktop.ui.files
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +37,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -44,6 +51,7 @@ import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_ICON
 import nl.jessedezwart.piglinpanel.desktop.ui.common.ROW_TEXT_BUTTON_PADDING
 import nl.jessedezwart.piglinpanel.desktop.ui.common.TextButton
 import nl.jessedezwart.piglinpanel.desktop.ui.common.codeLangFor
+import nl.jessedezwart.piglinpanel.desktop.ui.common.handCursor
 import nl.jessedezwart.piglinpanel.fs.FileContent
 import nl.jessedezwart.piglinpanel.model.FileEntry
 import nl.jessedezwart.piglinpanel.model.ServerProfile
@@ -133,44 +141,13 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
             Card(Modifier.width(300.dp)) {
                 LazyColumn(Modifier.padding(4.dp)) {
                     items(entries, key = { it.path }) { entry ->
-                        Row(
-                            Modifier.fillMaxWidth().height(ROW_HEIGHT),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                if (entry.directory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
-                                contentDescription = null,
-                                modifier = Modifier.size(ROW_ICON),
-                                tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                            )
-                            TextButton(
-                                onClick = { openEntry(entry) },
-                                modifier = Modifier.weight(1f).height(ROW_HEIGHT),
-                                contentPadding = ROW_TEXT_BUTTON_PADDING,
-                            ) {
-                                Text(
-                                    entry.name,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            IconButton(onClick = { renaming = entry }, modifier = Modifier.size(ROW_HEIGHT)) {
-                                Icon(
-                                    Icons.Default.DriveFileRenameOutline,
-                                    contentDescription = "Rename",
-                                    modifier = Modifier.size(ROW_ICON),
-                                )
-                            }
-                            IconButton(onClick = { deleting = entry }, modifier = Modifier.size(ROW_HEIGHT)) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "Delete",
-                                    modifier = Modifier.size(ROW_ICON),
-                                )
-                            }
-                        }
+                        FileRow(
+                            entry = entry,
+                            selected = entry.path == openFile?.path,
+                            onOpen = { openEntry(entry) },
+                            onRename = { renaming = entry },
+                            onDelete = { deleting = entry },
+                        )
                     }
                 }
             }
@@ -244,6 +221,68 @@ fun FilesScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostS
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
+    }
+}
+
+/**
+ * One entry in the file list. The whole row opens the entry — glyph and trailing gap included — and
+ * it paints its own hover fill, since a 22dp row is too thin a target to aim at without one.
+ */
+@Composable
+private fun FileRow(
+    entry: FileEntry,
+    selected: Boolean,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val interactions = remember { MutableInteractionSource() }
+    val hovered by interactions.collectIsHoveredAsState()
+    val background = when {
+        selected -> MaterialTheme.colorScheme.secondaryContainer
+        hovered -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+        else -> Color.Transparent
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(ROW_HEIGHT)
+            .clip(MaterialTheme.shapes.extraSmall)
+            .background(background)
+            .hoverable(interactions)
+            .handCursor()
+            .clickable(onClick = onOpen)
+            .padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (entry.directory) Icons.Default.Folder else Icons.Default.InsertDriveFile,
+            contentDescription = null,
+            modifier = Modifier.size(ROW_ICON),
+            tint = if (entry.directory) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+        )
+        Text(
+            entry.name,
+            modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        IconButton(onClick = onRename, modifier = Modifier.size(ROW_HEIGHT)) {
+            Icon(
+                Icons.Default.DriveFileRenameOutline,
+                contentDescription = "Rename",
+                modifier = Modifier.size(ROW_ICON),
+            )
+        }
+        IconButton(onClick = onDelete, modifier = Modifier.size(ROW_HEIGHT)) {
+            Icon(
+                Icons.Default.Delete,
+                contentDescription = "Delete",
+                modifier = Modifier.size(ROW_ICON),
+            )
+        }
     }
 }
 
