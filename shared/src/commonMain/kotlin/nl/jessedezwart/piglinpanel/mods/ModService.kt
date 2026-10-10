@@ -412,6 +412,12 @@ class ModService(
     fun disabledDependenciesOf(mods: List<ModFile>, target: ModFile): List<ModFile> =
         ModDependencyGraph.of(mods).disabledDependenciesOf(target)
 
+    /** The hard dependencies of each of [targets], keyed by relative path; see [ModDependencyGraph.requiredDependenciesOf]. */
+    fun requiredDependenciesOf(mods: List<ModFile>, targets: List<ModFile>): Map<String, List<RequiredDependency>> {
+        val graph = ModDependencyGraph.of(mods)
+        return targets.associate { it.relativePath to graph.requiredDependenciesOf(it) }
+    }
+
     /** The enabled mods that would lose a required dependency if [target] were disabled or deleted. */
     fun dependentsBrokenBy(mods: List<ModFile>, target: ModFile): List<String> =
         ModDependencyGraph.of(mods).wouldBreakIfRemoved(target).map(::displayName).distinct()

@@ -3,6 +3,8 @@ package nl.jessedezwart.piglinpanel.desktop.ui.overview
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -10,12 +12,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -26,42 +31,54 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import nl.jessedezwart.piglinpanel.control.ServerStartCommand
-import nl.jessedezwart.piglinpanel.control.StartResult
+import nl.jessedezwart.piglinpanel.control.ActionResult
 import nl.jessedezwart.piglinpanel.desktop.di.AppGraph
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Button
+import nl.jessedezwart.piglinpanel.desktop.ui.common.OutlinedButton
+import nl.jessedezwart.piglinpanel.model.ServerAction
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.status.ServerStatus
 import nl.jessedezwart.piglinpanel.sysinfo.Metrics
 import nl.jessedezwart.piglinpanel.sysinfo.Specs
 
-/** Server status, host specs, and live metrics; polls every 5 s without overlapping runs. */
+/**
+ * Server status, host specs, metrics and the profile's actions. Status and metrics are read once when
+ * the screen opens and again on Refresh — never on a timer, so an idle panel puts no load on the host.
+ */
 @Composable
 fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
-    val status by produceState<ServerStatus?>(null, profile.id) {
-        while (isActive) {
-            value = graph.statusService.statusFor(profile)
-            delay(5_000)
-        }
-    }
+    val scope = rememberCoroutineScope()
+    var status by remember(profile.id) { mutableStateOf<ServerStatus?>(null) }
+    var metrics by remember(profile.id) { mutableStateOf<Metrics?>(null) }
+    var refreshing by remember(profile.id) { mutableStateOf(false) }
     val specs by produceState<Specs?>(null, profile.id) {
         value = graph.systemInfoService.specs(profile)
     }
-    val metrics by produceState<Metrics?>(null, profile.id) {
-        while (isActive) {
-            value = graph.systemInfoService.metrics(profile)
-            delay(5_000)
+
+    fun refresh() {
+        if (refreshing) return
+        refreshing = true
+        scope.launch {
+            try {
+                coroutineScope {
+                    launch { status = graph.statusService.statusFor(profile) }
+                    launch { metrics = graph.systemInfoService.metrics(profile) }
+                }
+            } finally {
+                refreshing = false
+            }
         }
     }
 
-    val scope = rememberCoroutineScope()
-    val starter = remember(profile.id) { ServerStarter(graph, profile, scope) }
+    LaunchedEffect(profile.id) { refresh() }
+
+    // Keyed on the whole profile, so an edited working directory or SSH login is what the next run uses.
+    val actions = remember(profile) { ActionRunner(graph, profile, scope, onFinished = ::refresh) }
 
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
@@ -77,32 +94,23 @@ fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
                             .background(if (online) Color(0xFF43A047) else Color(0xFFE53935)),
                     )
                     Text(
-                        if (online) "Online" else "Offline",
+                        when {
+                            status == null -> "Checking…"
+                            online -> "Online"
+                            else -> "Offline"
+                        },
                         Modifier.padding(start = 8.dp).weight(1f),
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    Button(
-                        onClick = starter::start,
-                        enabled = !online && !starter.busy && starter.unavailable == null,
-                    ) {
-                        Text(if (starter.busy) "Starting…" else "Start server")
+                    OutlinedButton(onClick = ::refresh, enabled = !refreshing) {
+                        Text(if (refreshing) "Refreshing…" else "Refresh")
                     }
                 }
                 status?.let { Text("${it.host}:${it.port}", style = MaterialTheme.typography.bodySmall) }
-                val note = starter.error ?: starter.unavailable?.takeIf { !online }
-                note?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (starter.error != null) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                }
             }
         }
+
+        ActionsCard(profile, actions, unavailable = graph.serverActionService.unavailableReason(profile))
 
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -124,7 +132,7 @@ fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
 
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Live metrics", style = MaterialTheme.typography.titleMedium)
+                Text("Metrics", style = MaterialTheme.typography.titleMedium)
                 when (val m = metrics) {
                     null -> Text("Loading…", style = MaterialTheme.typography.bodySmall)
                     else -> if (!m.available) {
@@ -147,56 +155,108 @@ fun OverviewScreen(graph: AppGraph, profile: ServerProfile) {
     }
 }
 
-/**
- * Drives the Start button: runs the start command, then waits for the server port to open, because
- * a start command returning successfully only means the JVM launched, not that anyone can join yet.
- */
-private class ServerStarter(
+/** Runs one configured action at a time and keeps the outcome of the last one for display. */
+private class ActionRunner(
     private val graph: AppGraph,
     private val profile: ServerProfile,
     private val scope: CoroutineScope,
+    private val onFinished: () -> Unit,
 ) {
-    var busy by mutableStateOf(false)
+    /** The action currently running, or null when idle. */
+    var running by mutableStateOf<ServerAction?>(null)
         private set
 
-    var error by mutableStateOf<String?>(null)
+    var last by mutableStateOf<Pair<ServerAction, ActionResult>?>(null)
         private set
 
-    /** Why the button is disabled, or null when the server can be started. */
-    val unavailable: String?
-        get() = graph.serverControlService.unavailableReason(profile)
+    /** An action waiting on the user's go-ahead, because it is configured to ask first. */
+    var pending by mutableStateOf<ServerAction?>(null)
 
-    fun start() {
-        if (busy) return
+    fun request(action: ServerAction) {
+        if (action.confirm) pending = action else run(action)
+    }
+
+    fun run(action: ServerAction) {
+        pending = null
+        if (running != null) return
+        running = action
         scope.launch {
-            busy = true
-            error = null
             try {
-                when (val result = graph.serverControlService.start(profile)) {
-                    is StartResult.Failed -> error = result.message
-                    StartResult.Started -> awaitOnline()
-                }
+                last = action to graph.serverActionService.run(profile, action)
             } finally {
-                busy = false
+                running = null
             }
+            // A restart or stop changes what the status card should say.
+            onFinished()
         }
     }
+}
 
-    private suspend fun awaitOnline() {
-        val opened = withTimeoutOrNull(ONLINE_TIMEOUT_MILLIS) {
-            while (!graph.statusService.statusFor(profile).online) {
-                delay(3_000)
-            }
-            true
-        }
-        if (opened == null) {
-            error = "The server started but its port is still closed after two minutes." +
-                " Its output is in ${ServerStartCommand.LOG_FILE}, in the server folder."
-        }
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ActionsCard(profile: ServerProfile, runner: ActionRunner, unavailable: String?) {
+    runner.pending?.let { action ->
+        AlertDialog(
+            onDismissRequest = { runner.pending = null },
+            title = { Text("Run ${action.displayName}?") },
+            text = {
+                Text(
+                    action.command,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                )
+            },
+            confirmButton = { Button(onClick = { runner.run(action) }) { Text("Run") } },
+            dismissButton = { OutlinedButton(onClick = { runner.pending = null }) { Text("Cancel") } },
+        )
     }
 
-    private companion object {
-        const val ONLINE_TIMEOUT_MILLIS = 120_000L
+    Card {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Actions", style = MaterialTheme.typography.titleMedium)
+            when {
+                unavailable != null -> Text(
+                    unavailable,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                profile.actions.isEmpty() -> Text(
+                    "No actions yet. Add commands such as docker compose restart under Settings.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    profile.actions.forEach { action ->
+                        OutlinedButton(onClick = { runner.request(action) }, enabled = runner.running == null) {
+                            Text(if (runner.running?.id == action.id) "${action.displayName}…" else action.displayName)
+                        }
+                    }
+                }
+            }
+            runner.last?.let { (action, result) ->
+                val failed = result is ActionResult.Failed
+                val body = when (result) {
+                    is ActionResult.Succeeded -> result.output
+                    is ActionResult.Failed -> result.message
+                }
+                Text(
+                    if (failed) "${action.displayName} failed" else "${action.displayName} finished",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                )
+                if (body.isNotBlank()) {
+                    SelectionContainer {
+                        Text(
+                            body,
+                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                            color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

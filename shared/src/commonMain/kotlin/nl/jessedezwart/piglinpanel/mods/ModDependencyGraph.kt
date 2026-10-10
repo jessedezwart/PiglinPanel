@@ -20,6 +20,14 @@ data class VersionConflict(
     override fun toString(): String = "$id $range (have $installed)"
 }
 
+/** One hard dependency a jar declares, and the enabled jar providing it (null when none does). */
+data class RequiredDependency(
+    val id: String,
+    /** The range as declared, verbatim; null when any version will do. */
+    val range: String?,
+    val provider: ModFile?,
+)
+
 /**
  * The dependency relationships between the mods actually installed on a server, built from what the
  * jars declare rather than from a repository, so it covers mods no repository has indexed.
@@ -77,6 +85,25 @@ class ModDependencyGraph private constructor(
                 .filter { it in ids }
                 .any { id -> providersAmong(enabled, id).none { it !== file } }
         }
+    }
+
+    /**
+     * Each hard dependency of [file], with the enabled jar that satisfies it — preferring one whose
+     * own id matches over one that merely `provides` it — or null when nothing enabled does. Ids
+     * [file] bundles itself are left out: they are part of the mod, not something it depends on.
+     */
+    fun requiredDependenciesOf(file: ModFile): List<RequiredDependency> {
+        val metadata = file.metadata ?: return emptyList()
+        val own = metadata.ids().toSet()
+        return metadata.requires
+            .filter { it.id !in own }
+            .distinctBy { it.id }
+            .map { dependency ->
+                val provider = providersAmong(enabled, dependency.id)
+                    .filter { it !== file }
+                    .minByOrNull { if (it.declared.modId == dependency.id) 0 else 1 }
+                RequiredDependency(dependency.id, dependency.range, provider)
+            }
     }
 
     /** Required ids of [file] that nothing enabled provides — the mod is broken as it stands. */

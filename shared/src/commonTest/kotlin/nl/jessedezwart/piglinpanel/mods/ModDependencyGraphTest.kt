@@ -47,6 +47,19 @@ class ModDependencyGraphTest {
     }
 
     @Test
+    fun listsRequiredDependenciesWithTheirProviders() {
+        val api = mod("fabric-api", provides = listOf("fabric"))
+        val bundler = mod("bundler", requires = listOf("fabric", "absent", "inner"), provides = listOf("inner"))
+
+        val graph = ModDependencyGraph.of(listOf(api, bundler))
+
+        val deps = graph.requiredDependenciesOf(bundler)
+        assertEquals(listOf("fabric", "absent"), deps.map { it.id })
+        assertEquals(api, deps[0].provider)
+        assertEquals(null, deps[1].provider)
+    }
+
+    @Test
     fun countsADependencySatisfiedByAProvidedId() {
         val api = mod("fabric-api", provides = listOf("fabric"))
         val other = mod("other", requires = listOf("fabric"))

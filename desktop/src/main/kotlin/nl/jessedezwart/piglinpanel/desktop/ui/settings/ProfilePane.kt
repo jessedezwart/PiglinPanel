@@ -31,9 +31,9 @@ import nl.jessedezwart.piglinpanel.desktop.ui.common.SecretField
 import nl.jessedezwart.piglinpanel.desktop.ui.common.Switch
 import nl.jessedezwart.piglinpanel.model.AccessType
 import nl.jessedezwart.piglinpanel.model.ModFolder
+import nl.jessedezwart.piglinpanel.model.ServerAction
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.model.SshConfig
-import nl.jessedezwart.piglinpanel.model.StartConfig
 import nl.jessedezwart.piglinpanel.ssh.SshIdentities
 
 /**
@@ -60,9 +60,7 @@ internal fun ProfilePane(
     var sshKeyPath by remember(key) { mutableStateOf(profile.ssh.privateKeyPath) }
     var sshKeyPassphrase by remember(key) { mutableStateOf(profile.ssh.privateKeyPassphrase) }
     var auth by remember(key) { mutableStateOf(SshAuth.of(profile.ssh)) }
-    var startCommand by remember(key) { mutableStateOf(profile.start.command) }
-    var startDirectory by remember(key) { mutableStateOf(profile.start.workingDirectory) }
-    var startSelfDetaching by remember(key) { mutableStateOf(profile.start.selfDetaching) }
+    var actions by remember(key) { mutableStateOf(profile.actions) }
 
     val edited = profile.copy(
         accessType = accessType,
@@ -80,11 +78,9 @@ internal fun ProfilePane(
             privateKeyPath = if (auth == SshAuth.KeyFile) sshKeyPath.trim() else "",
             privateKeyPassphrase = if (auth == SshAuth.KeyFile) sshKeyPassphrase else "",
         ),
-        start = StartConfig(
-            command = startCommand.trim(),
-            workingDirectory = startDirectory.trim(),
-            selfDetaching = startSelfDetaching,
-        ),
+        actions = actions
+            .filter { it.command.isNotBlank() }
+            .map { it.copy(name = it.name.trim(), command = it.command.trim(), workingDirectory = it.workingDirectory.trim()) },
     )
     val complete = rootPath.isNotBlank() && (accessType == AccessType.LOCAL || sshHost.isNotBlank())
     val dirty = edited != profile
@@ -206,31 +202,21 @@ internal fun ProfilePane(
             }
 
             SettingsSection(
-                title = "Startup",
-                description = "The command that starts the server, used by the button on Overview.",
+                title = "Actions",
+                description = "Commands you can run on the server's host from Overview, such as" +
+                    " docker compose restart. Each runs to completion, and its output is shown.",
             ) {
-                FormField(
-                    value = startCommand,
-                    onValueChange = { startCommand = it },
-                    label = "Start command",
-                    placeholder = "./start.sh",
-                    supportingText = "Leave empty to keep starting the server yourself.",
-                )
-                FormField(
-                    value = startDirectory,
-                    onValueChange = { startDirectory = it },
-                    label = "Working directory",
-                    placeholder = "Server root",
-                    supportingText = "Relative to the server root, or an absolute path.",
-                )
-                ToggleRow(
-                    checked = startSelfDetaching,
-                    onCheckedChange = { startSelfDetaching = it },
-                    label = "The command runs the server in the background itself",
-                    description = "Turn this on for screen -dmS, tmux new -d, systemctl or docker." +
-                        " Otherwise Piglin Panel detaches the command, so the server keeps running" +
-                        " after the SSH connection closes.",
-                )
+                actions.forEachIndexed { index, action ->
+                    ActionEditor(
+                        action = action,
+                        onChange = { changed -> actions = actions.mapIndexed { i, a -> if (i == index) changed else a } },
+                        onRemove = { actions = actions.filterIndexed { i, _ -> i != index } },
+                    )
+                }
+                OutlinedButton(onClick = { actions = actions + ServerAction() }) {
+                    Icon(Icons.Default.Add, contentDescription = null, Modifier.size(18.dp))
+                    Text("Add action", Modifier.padding(start = 6.dp))
+                }
             }
         }
 
@@ -285,26 +271,42 @@ internal fun ProfilePane(
     }
 }
 
-/** A switch with its label and explanation, laid out like the fields it sits among. */
+/** One configured action: its label, the command, where it runs, and whether to confirm first. */
 @Composable
-private fun ToggleRow(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    label: String,
-    description: String,
-) {
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                description,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun ActionEditor(action: ServerAction, onChange: (ServerAction) -> Unit, onRemove: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FormField(
+                value = action.name,
+                onValueChange = { onChange(action.copy(name = it)) },
+                label = "Name",
+                placeholder = "Restart",
+                modifier = Modifier.weight(1f),
             )
+            FormField(
+                value = action.command,
+                onValueChange = { onChange(action.copy(command = it)) },
+                label = "Command",
+                placeholder = "docker compose restart",
+                modifier = Modifier.weight(2f),
+            )
+            FormField(
+                value = action.workingDirectory,
+                onValueChange = { onChange(action.copy(workingDirectory = it)) },
+                label = "Working directory",
+                placeholder = "Server root",
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onRemove) {
+                Icon(Icons.Default.Close, contentDescription = "Remove action")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Switch(checked = action.confirm, onCheckedChange = { onChange(action.copy(confirm = it)) })
+            Text("Ask before running", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

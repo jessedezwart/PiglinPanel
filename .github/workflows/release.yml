@@ -70,8 +70,6 @@ jobs:
           path: artifacts
           pattern: release-assets-*
 
-      # Created as a draft so the release only becomes "latest" once every installer and update
-      # manifest is on it; installed apps poll releases/latest and must never see a half-filled one.
       - name: Create draft release
         run: |
           if ! gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then

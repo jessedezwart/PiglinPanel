@@ -4,10 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -52,7 +53,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import com.mikepenz.markdown.coil3.Coil3ImageTransformerImpl
 import com.mikepenz.markdown.m3.Markdown
@@ -83,6 +83,7 @@ import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.mods.AppliedUpdate
 import nl.jessedezwart.piglinpanel.mods.ModSide
 import nl.jessedezwart.piglinpanel.mods.PlannedUpdate
+import nl.jessedezwart.piglinpanel.mods.RequiredDependency
 import nl.jessedezwart.piglinpanel.mods.ScanProgress
 import nl.jessedezwart.piglinpanel.mods.UpdatePlan
 import nl.jessedezwart.piglinpanel.search.ModSource
@@ -94,7 +95,6 @@ private val CHECKBOX_DRAW_SIZE = 20.dp
  * Column widths of the installed-mods table. The header and the rows read from the same constants,
  * which is the whole reason the columns line up.
  */
-private val COL_SELECT = 18.dp
 private val COL_SIDE = 54.dp
 private val COL_REPO = 44.dp
 private val COL_DOWNLOADS = 68.dp
@@ -387,12 +387,33 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
         )
     }
 
+    /** Every active mod with an update to apply, ignored ones excluded. */
+    val updatable = remember(groups, profile.ignoredUpdates) {
+        groups.mapNotNull { group ->
+            val active = group.active ?: return@mapNotNull null
+            if (group.update?.available() == true && !group.updateIgnored(profile)) group to active else null
+        }
+    }
+
+    /** Skips (or, with false, un-skips) the update [group] is offering, for this profile. */
+    fun ignoreUpdate(group: ModGroup, ignore: Boolean) {
+        graph.registry.setIgnoredUpdate(profile.id, group.key, if (ignore) group.update?.latestVersionId else null)
+    }
+
+    /** Changelogs already fetched this session, so revisiting the Updates tab does not refetch them. */
+    val changelogs = remember(profile.id) { mutableStateMapOf<String, ChangelogState>() }
+
     Column(Modifier.fillMaxSize()) {
         PrimaryTabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Installed") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Browse") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Dependency graph") })
-            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Compatibility") })
+            Tab(
+                selected = tab == 1,
+                onClick = { tab = 1 },
+                text = { Text(if (updatable.isEmpty()) "Updates" else "Updates (${updatable.size})") },
+            )
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Browse") })
+            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Dependency graph") })
+            Tab(selected = tab == 4, onClick = { tab = 4 }, text = { Text("Compatibility") })
         }
         Box(Modifier.fillMaxSize().padding(top = 6.dp)) {
             when (tab) {
@@ -401,21 +422,39 @@ fun ModsScreen(graph: AppGraph, profile: ServerProfile, snackbar: SnackbarHostSt
                     profile = profile,
                     groups = groups,
                     mods = mods,
+                    updatable = updatable,
                     progress = progress,
                     task = task,
                     rescan = ::rescan,
                     applyUpdates = ::applyUpdates,
+                    ignoreUpdate = ::ignoreUpdate,
                     mutate = mutate,
                     notify = ::notify,
                 )
-                1 -> BrowseModsTab(
+                1 -> UpdatesTab(
+                    graph = graph,
+                    profile = profile,
+                    groups = groups,
+                    mods = mods,
+                    updatable = updatable,
+                    progress = progress,
+                    task = task,
+                    changelogs = changelogs,
+                    // The screen's scope rather than the tab's, so a fetch still lands in the cache
+                    // when the tab is left mid-fetch instead of leaving the entry stuck on Loading.
+                    scope = scope,
+                    rescan = ::rescan,
+                    applyUpdates = ::applyUpdates,
+                    onIgnore = { group -> ignoreUpdate(group, true) },
+                )
+                2 -> BrowseModsTab(
                     graph = graph,
                     profile = profile,
                     snackbar = snackbar,
                     onInstalled = { rescan(checkUpdates = true) },
                 )
                 // Reads the same scan the Installed tab shows, so neither needs a second scan.
-                2 -> DependencyGraphTab(mods = mods, groups = groups)
+                3 -> DependencyGraphTab(mods = mods, groups = groups)
                 else -> CompatibilityTab(
                     graph = graph,
                     profile = profile,
@@ -433,15 +472,16 @@ private fun InstalledModsTab(
     profile: ServerProfile,
     groups: List<ModGroup>,
     mods: List<ModFile>,
+    updatable: List<Pair<ModGroup, ModFile>>,
     progress: ScanProgress?,
     task: String?,
     rescan: (checkUpdates: Boolean, forceRefresh: Boolean) -> Unit,
     applyUpdates: (List<Pair<ModGroup, ModFile>>) -> Unit,
+    ignoreUpdate: (ModGroup, Boolean) -> Unit,
     mutate: Mutation,
     notify: (String) -> Unit,
 ) {
     val busy = task != null
-    val scope = rememberCoroutineScope()
 
     /** Set while a removal is waiting on confirmation because other mods depend on the target. */
     var breakage by remember(profile.id) { mutableStateOf<Breakage?>(null) }
@@ -460,10 +500,6 @@ private fun InstalledModsTab(
 
     /** Narrows the list to mods with an update to apply, ignored ones excluded. */
     var updatableOnly by remember(profile.id) { mutableStateOf(false) }
-    var showChangelogs by remember(profile.id) { mutableStateOf(false) }
-
-    /** Changelogs already fetched this session, so reopening the overview does not refetch them. */
-    val changelogs = remember(profile.id) { mutableStateMapOf<String, ChangelogState>() }
     var sortKey by remember(profile.id) { mutableStateOf(SortKey.NAME) }
     var ascending by remember(profile.id) { mutableStateOf(true) }
 
@@ -472,13 +508,6 @@ private fun InstalledModsTab(
 
     val fullyDisabled = remember(groups) { groups.filter { it.active == null } }
     val unusedLibraries = remember(groups) { groups.filter { it.unusedLibrary } }
-
-    val updatable = remember(groups, profile.ignoredUpdates) {
-        groups.mapNotNull { group ->
-            val active = group.active ?: return@mapNotNull null
-            if (group.update?.available() == true && !group.updateIgnored(profile)) group to active else null
-        }
-    }
     val updatableKeys = remember(updatable) { updatable.map { it.first.key }.toSet() }
 
     val rows = remember(
@@ -515,21 +544,6 @@ private fun InstalledModsTab(
         if (dependents.isEmpty()) run() else breakage = Breakage(action, title, dependents, run)
     }
 
-    /** Skips (or, with a null version, un-skips) the update [group] is offering, for this profile. */
-    fun ignoreUpdate(group: ModGroup, ignore: Boolean) {
-        graph.registry.setIgnoredUpdate(profile.id, group.key, if (ignore) group.update?.latestVersionId else null)
-    }
-
-    /** Mods ticked for a targeted update. Empty means "all of them", so the button always works. */
-    val selected = remember(profile.id) { mutableStateSetOf<String>() }
-
-    // A mod that was updated (or vanished) is no longer a target, so it drops out of the selection
-    // instead of quietly counting towards the next update.
-    LaunchedEffect(updatableKeys) { selected.retainAll(updatableKeys) }
-
-    val targets = if (selected.isEmpty()) updatable else updatable.filter { it.first.key in selected }
-    val canUpdate = !busy && targets.isNotEmpty()
-
     breakage?.let { pending ->
         AlertDialog(
             onDismissRequest = { breakage = null },
@@ -558,57 +572,8 @@ private fun InstalledModsTab(
         )
     }
 
-    if (showChangelogs) {
-        ChangelogDialog(
-            graph = graph,
-            updates = updatable,
-            changelogs = changelogs,
-            scope = scope,
-            onIgnore = { group -> ignoreUpdate(group, true) },
-            onDismiss = { showChangelogs = false },
-        )
-    }
-
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = { rescan(true, false) }, enabled = !busy) {
-                Text(if (task == "Update check") "Checking…" else "Check updates")
-            }
-            OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
-                Text("Force refresh")
-            }
-            if (updatable.isNotEmpty()) {
-                RowCheckbox(
-                    state = when (selected.size) {
-                        0 -> ToggleableState.Off
-                        updatable.size -> ToggleableState.On
-                        else -> ToggleableState.Indeterminate
-                    },
-                    enabled = !busy,
-                    contentDescription = "Select all updatable mods",
-                    onClick = {
-                        val all = selected.size == updatable.size
-                        selected.clear()
-                        if (!all) selected.addAll(updatableKeys)
-                    },
-                )
-            }
-            Button(onClick = { applyUpdates(targets) }, enabled = canUpdate) {
-                Text(
-                    when {
-                        updatable.isEmpty() -> "Update all"
-                        selected.isEmpty() -> "Update all (${updatable.size})"
-                        else -> "Update selected (${selected.size})"
-                    },
-                )
-            }
-            OutlinedButton(onClick = { showChangelogs = true }, enabled = updatable.isNotEmpty()) {
-                Text("Changelogs")
-            }
-            if (busy && task != "Update check") {
-                Text("$task…", style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        UpdateCheckButtons(task = task, rescan = rescan)
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -661,23 +626,7 @@ private fun InstalledModsTab(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        progress?.let { p ->
-            Column {
-                Text(
-                    when (p.phase) {
-                        "hashing" -> "Hashing ${p.done}/${p.total}: ${p.fileName ?: ""}"
-                        "updating" -> "Updating ${p.done + 1}/${p.total}: ${p.fileName ?: ""}"
-                        "downloading" -> "Checking ${p.done}/${p.total}: ${p.fileName ?: ""}"
-                        else -> "Looking up updates for ${p.total} mods…"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                LinearProgressIndicator(
-                    progress = { if (p.total > 0) p.done.toFloat() / p.total else 0f },
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                )
-            }
-        }
+        progress?.let { ScanProgressBar(it) }
         if (groups.isEmpty() && !busy) {
             Text(
                 "No mods found in this server's mod folders.",
@@ -702,12 +651,8 @@ private fun InstalledModsTab(
                     row = row,
                     showFolder = showFolder,
                     enabled = !busy,
-                    selected = row.group.key in selected,
                     ignored = row.group.updateIgnored(profile),
                     onIgnore = { ignore -> ignoreUpdate(row.group, ignore) },
-                    onToggleSelected = {
-                        if (!selected.add(row.group.key)) selected.remove(row.group.key)
-                    },
                     // Through the same planner as a batch: a single update can strand a dependent
                     // just as well, and one mod is the cheapest possible plan.
                     onApplyUpdate = { mod -> applyUpdates(listOf(row.group to mod)) },
@@ -771,7 +716,6 @@ private fun TableHeader(sortKey: SortKey, ascending: Boolean, onSort: (SortKey) 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Spacer(Modifier.width(COL_SELECT))
         Spacer(Modifier.width(ROW_ICON))
         HeaderCell("Name", SortKey.NAME, sortKey, ascending, onSort, Modifier.weight(COL_NAME_WEIGHT))
         HeaderCell("File", SortKey.FILE, sortKey, ascending, onSort, Modifier.weight(COL_FILE_WEIGHT))
@@ -837,10 +781,8 @@ private fun ModTableRow(
     row: ModRow,
     showFolder: Boolean,
     enabled: Boolean,
-    selected: Boolean,
     ignored: Boolean,
     onIgnore: (Boolean) -> Unit,
-    onToggleSelected: () -> Unit,
     onApplyUpdate: (ModFile) -> Unit,
     onDisable: (ModFile) -> Unit,
     onActivate: (ModFile) -> Unit,
@@ -870,17 +812,6 @@ private fun ModTableRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Only a mod with an update to apply can be ticked, so most rows leave the column empty.
-        if (hasUpdate && !ignored) {
-            RowCheckbox(
-                state = ToggleableState(selected),
-                enabled = enabled,
-                contentDescription = "Select ${group.displayName} for update",
-                onClick = onToggleSelected,
-            )
-        } else {
-            Spacer(Modifier.width(COL_SELECT))
-        }
         Box(Modifier.size(ROW_ICON)) {
             if (row.active) {
                 group.iconUrl?.let { url ->
@@ -1013,28 +944,99 @@ private fun ModTableRow(
     }
 }
 
-/**
- * Every pending update with the release notes of the version it would install, so a batch update
- * can be reviewed before it is applied. Notes are fetched when the dialog opens — Modrinth's usually
- * came with the scan already — and kept in [changelogs] for the rest of the session.
- */
+/** The update-check controls both the Installed and the Updates tab start with. */
 @Composable
-private fun ChangelogDialog(
+private fun UpdateCheckButtons(
+    task: String?,
+    rescan: (checkUpdates: Boolean, forceRefresh: Boolean) -> Unit,
+    extra: @Composable () -> Unit = {},
+) {
+    val busy = task != null
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Button(onClick = { rescan(true, false) }, enabled = !busy) {
+            Text(if (task == "Update check") "Checking…" else "Check updates")
+        }
+        OutlinedButton(onClick = { rescan(true, true) }, enabled = !busy) {
+            Text("Force refresh")
+        }
+        extra()
+        if (busy && task != "Update check") {
+            Text("$task…", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun ScanProgressBar(p: ScanProgress) {
+    Column {
+        Text(
+            when (p.phase) {
+                "hashing" -> "Hashing ${p.done}/${p.total}: ${p.fileName ?: ""}"
+                "updating" -> "Updating ${p.done + 1}/${p.total}: ${p.fileName ?: ""}"
+                "downloading" -> "Checking ${p.done}/${p.total}: ${p.fileName ?: ""}"
+                else -> "Looking up updates for ${p.total} mods…"
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        LinearProgressIndicator(
+            progress = { if (p.total > 0) p.done.toFloat() / p.total else 0f },
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        )
+    }
+}
+
+/**
+ * Every pending update with what it depends on and the release notes of the version it would
+ * install, so a batch can be reviewed before it is applied. Everything starts ticked: the usual
+ * answer is "all of it", and unticking the odd one out is the exception.
+ *
+ * Notes are fetched when the tab opens — Modrinth's usually came with the scan already — and kept
+ * in [changelogs] for the rest of the session.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun UpdatesTab(
     graph: AppGraph,
-    updates: List<Pair<ModGroup, ModFile>>,
+    profile: ServerProfile,
+    groups: List<ModGroup>,
+    mods: List<ModFile>,
+    updatable: List<Pair<ModGroup, ModFile>>,
+    progress: ScanProgress?,
+    task: String?,
     changelogs: MutableMap<String, ChangelogState>,
     scope: CoroutineScope,
+    rescan: (checkUpdates: Boolean, forceRefresh: Boolean) -> Unit,
+    applyUpdates: (List<Pair<ModGroup, ModFile>>) -> Unit,
     onIgnore: (ModGroup) -> Unit,
-    onDismiss: () -> Unit,
 ) {
-    LaunchedEffect(updates) {
-        for ((group, _) in updates) {
+    val busy = task != null
+    val updatableKeys = remember(updatable) { updatable.map { it.first.key }.toSet() }
+
+    /**
+     * Mods unticked by the user. Tracked as exclusions rather than selections, so every update a
+     * new check turns up arrives ticked.
+     */
+    val deselected = remember(profile.id) { mutableStateSetOf<String>() }
+
+    // A mod that was updated (or vanished) no longer needs remembering as unticked.
+    LaunchedEffect(updatableKeys) { deselected.retainAll(updatableKeys) }
+
+    val targets = updatable.filter { it.first.key !in deselected }
+
+    /** Which mod each enabled jar belongs to, so a dependency can be named and its update spotted. */
+    val groupByPath = remember(groups) {
+        groups.mapNotNull { group -> group.active?.let { it.relativePath to group } }.toMap()
+    }
+    val dependencies = remember(mods, updatable) {
+        graph.modService.requiredDependenciesOf(mods, updatable.map { it.second })
+    }
+
+    LaunchedEffect(updatable) {
+        for ((group, _) in updatable) {
             val update = group.update ?: continue
             val key = changelogKey(group, update)
             if (changelogs[key] is ChangelogState.Loaded || changelogs[key] is ChangelogState.Loading) continue
             changelogs[key] = ChangelogState.Loading
-            // Launched on the tab's scope rather than this effect's, so closing the dialog mid-fetch
-            // still lets the result land in the cache instead of leaving the entry stuck on Loading.
             scope.launch {
                 changelogs[key] = try {
                     ChangelogState.Loaded(graph.modService.changelog(update))
@@ -1045,71 +1047,156 @@ private fun ChangelogDialog(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-        // Changelogs are long reads, so the dialog takes most of the window rather than a card's width.
-        modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.9f),
-        title = { Text("Changelogs (${updates.size})") },
-        text = {
-            if (updates.isEmpty()) {
-                Text("No updates pending.", style = MaterialTheme.typography.bodyMedium)
-            } else LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(updates, key = { it.first.key }) { (group, file) ->
-                    val update = group.update ?: return@items
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Box(Modifier.size(ROW_ICON)) {
-                                group.iconUrl?.let { url ->
-                                    AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(ROW_ICON))
-                                }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        UpdateCheckButtons(task = task, rescan = rescan) {
+            if (updatable.isNotEmpty()) {
+                RowCheckbox(
+                    state = when (deselected.size) {
+                        0 -> ToggleableState.On
+                        updatable.size -> ToggleableState.Off
+                        else -> ToggleableState.Indeterminate
+                    },
+                    enabled = !busy,
+                    contentDescription = "Select all updates",
+                    onClick = {
+                        val noneSelected = deselected.size == updatable.size
+                        deselected.clear()
+                        if (!noneSelected) deselected.addAll(updatableKeys)
+                    },
+                )
+            }
+            Button(onClick = { applyUpdates(targets) }, enabled = !busy && targets.isNotEmpty()) {
+                Text(
+                    if (targets.size == updatable.size) {
+                        "Update all (${updatable.size})"
+                    } else {
+                        "Update selected (${targets.size} of ${updatable.size})"
+                    },
+                )
+            }
+        }
+        progress?.let { ScanProgressBar(it) }
+        if (updatable.isEmpty() && !busy) {
+            Text(
+                "No updates pending. Check updates to look for new versions.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(updatable, key = { it.first.key }) { (group, file) ->
+                val update = group.update ?: return@items
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        RowCheckbox(
+                            state = ToggleableState(group.key !in deselected),
+                            enabled = !busy,
+                            contentDescription = "Select ${group.displayName} for update",
+                            onClick = { if (!deselected.add(group.key)) deselected.remove(group.key) },
+                        )
+                        Box(Modifier.size(ROW_ICON)) {
+                            group.iconUrl?.let { url ->
+                                AsyncImage(model = url, contentDescription = null, modifier = Modifier.size(ROW_ICON))
                             }
-                            ModSourceBadge(update.source)
+                        }
+                        ModSourceBadge(update.source)
+                        Text(
+                            group.displayName,
+                            Modifier.projectLink(update),
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "${file.fileName} → ${update.latestVersionName ?: update.latestVersionId}",
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        RowAction("Ignore", enabled = !busy) { onIgnore(group) }
+                        // Through the same planner as the batch: a single update can strand a
+                        // dependent just as well.
+                        RowAction("Update only this", enabled = !busy) { applyUpdates(listOf(group to file)) }
+                    }
+                    val required = dependencies[file.relativePath].orEmpty()
+                    if (required.isNotEmpty()) {
+                        FlowRow(
+                            Modifier.padding(start = ROW_ICON + 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
                             Text(
-                                group.displayName,
-                                Modifier.projectLink(update),
-                                style = MaterialTheme.typography.titleSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                "Requires:",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            required.forEach { dependency ->
+                                DependencyLabel(
+                                    dependency = dependency,
+                                    provider = dependency.provider?.let { groupByPath[it.relativePath] },
+                                    updatableKeys = updatableKeys,
+                                    deselected = deselected,
+                                )
+                            }
+                        }
+                    }
+                    when (val state = changelogs[changelogKey(group, update)]) {
+                        null, ChangelogState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        is ChangelogState.Failed -> Text(
+                            "Could not load changelog: ${state.message}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        is ChangelogState.Loaded -> if (state.text == null) {
                             Text(
-                                "${file.fileName} → ${update.latestVersionName ?: update.latestVersionId}",
-                                Modifier.weight(1f),
+                                "No changelog provided.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
                             )
-                            RowAction("Ignore", enabled = true) { onIgnore(group) }
+                        } else {
+                            ChangelogMarkdown(state.text)
                         }
-                        when (val state = changelogs[changelogKey(group, update)]) {
-                            null, ChangelogState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                            is ChangelogState.Failed -> Text(
-                                "Could not load changelog: ${state.message}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                            is ChangelogState.Loaded -> if (state.text == null) {
-                                Text(
-                                    "No changelog provided.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            } else {
-                                ChangelogMarkdown(state.text)
-                            }
-                        }
-                        HorizontalDivider(Modifier.padding(top = 4.dp))
                     }
+                    HorizontalDivider(Modifier.padding(top = 4.dp))
                 }
             }
-        },
-        confirmButton = {
-            OutlinedButton(onClick = onDismiss) { Text("Close") }
-        },
+        }
+    }
+}
+
+/**
+ * One dependency of a pending update: the mod providing it, and whether that mod is itself being
+ * updated in this batch — the case worth reading twice, since the two changelogs belong together.
+ * Read from the jar installed now; the new version may ask for something different, which the
+ * planner checks once the jars are downloaded.
+ */
+@Composable
+private fun DependencyLabel(
+    dependency: RequiredDependency,
+    provider: ModGroup?,
+    updatableKeys: Set<String>,
+    deselected: Set<String>,
+) {
+    val name = provider?.displayName ?: dependency.id
+    val (suffix, color) = when {
+        dependency.provider == null -> " (missing)" to MaterialTheme.colorScheme.error
+        provider != null && provider.key in updatableKeys ->
+            if (provider.key in deselected) {
+                " (update not selected)" to MaterialTheme.colorScheme.tertiary
+            } else {
+                " (also updating)" to MaterialTheme.colorScheme.primary
+            }
+        else -> "" to MaterialTheme.colorScheme.onSurface
+    }
+    Text(
+        name + suffix,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        maxLines = 1,
     )
 }
 

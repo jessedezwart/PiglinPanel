@@ -31,7 +31,6 @@ data class ServerProfile(
     val modFolders: List<ModFolder> = listOf(ModFolder("mods", "mods", "mods")),
     val ssh: SshConfig = SshConfig(),
     val rcon: RconConfig = RconConfig(),
-    val start: StartConfig = StartConfig(),
     /** Detected Minecraft version, e.g. "1.21.1". Null when unknown; never auto-cleared. */
     val mcVersion: String? = null,
     /** Detected mod loader: "fabric" | "forge" | "neoforge" | "quilt". Null when unknown. */
@@ -41,6 +40,8 @@ data class ServerProfile(
      * version is skipped — once the repository publishes a newer one, the update is offered again.
      */
     val ignoredUpdates: Map<String, String> = emptyMap(),
+    /** User-defined commands run on the server's host from Overview, e.g. `docker compose restart`. */
+    val actions: List<ServerAction> = emptyList(),
 ) {
     /**
      * Label shown wherever a profile is listed: `host:/root/path` for SSH profiles, the plain root
@@ -68,23 +69,21 @@ data class ModFolder(
         get() = name.ifBlank { path }
 }
 
-/**
- * How the server process is launched. Only SSH profiles can be started from the panel; a local
- * server would need its own detachment handling, which Windows and Unix do not share.
- */
+/** A named shell command the user can run on the server's host with one click. */
+@OptIn(ExperimentalUuidApi::class)
 @Serializable
-data class StartConfig(
-    /** Shell command that starts the server, e.g. `./start.sh`. Blank means starting is off. */
+data class ServerAction(
+    val id: String = Uuid.random().toString(),
+    val name: String = "",
     val command: String = "",
     /** Where to run it: blank means the server root; a relative path resolves against the root. */
     val workingDirectory: String = "",
-    /**
-     * True when [command] detaches the process itself — `screen -dmS`, `tmux new -d`,
-     * `systemctl start`, `docker start`. Those run as typed; anything else is wrapped so the server
-     * survives the SSH session ending.
-     */
-    val selfDetaching: Boolean = false,
-)
+    /** Ask before running, for commands that interrupt players (restarts, stops). */
+    val confirm: Boolean = false,
+) {
+    val displayName: String
+        get() = name.ifBlank { command }
+}
 
 @Serializable
 data class SshConfig(

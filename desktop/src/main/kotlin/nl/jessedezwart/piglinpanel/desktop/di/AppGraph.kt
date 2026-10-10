@@ -9,7 +9,7 @@ import nl.jessedezwart.piglinpanel.config.AppConfigStore
 import nl.jessedezwart.piglinpanel.config.KeyringSecretCodec
 import nl.jessedezwart.piglinpanel.config.ServerRegistry
 import nl.jessedezwart.piglinpanel.config.piglinpanelConfigDir
-import nl.jessedezwart.piglinpanel.control.ServerControlService
+import nl.jessedezwart.piglinpanel.control.ServerActionService
 import nl.jessedezwart.piglinpanel.control.SshShell
 import nl.jessedezwart.piglinpanel.curseforge.CurseForgeClient
 import nl.jessedezwart.piglinpanel.desktop.update.AppUpdater
@@ -101,7 +101,7 @@ class AppGraph {
     val rconService = RconService()
     val statusService = ServerStatusService()
     val systemInfoService = SystemInfoService(sshConnections)
-    val serverControlService = ServerControlService(SshShell(sshConnections))
+    val serverActionService = ServerActionService(SshShell(sshConnections))
     val appUpdater = AppUpdater(scope)
 
     fun shutdown() {
