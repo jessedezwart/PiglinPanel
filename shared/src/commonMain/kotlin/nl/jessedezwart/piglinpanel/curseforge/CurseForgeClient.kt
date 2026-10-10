@@ -1,19 +1,12 @@
 package nl.jessedezwart.piglinpanel.curseforge
 
 import io.ktor.client.HttpClient
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.readRawBytes
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import kotlin.time.Instant
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import nl.jessedezwart.piglinpanel.model.ModUpdate
+import nl.jessedezwart.piglinpanel.modrinth.JsonApi
 import nl.jessedezwart.piglinpanel.search.ModDependency
 import nl.jessedezwart.piglinpanel.search.ModSearchHit
 import nl.jessedezwart.piglinpanel.search.ModSearchPage
@@ -51,6 +44,19 @@ class CurseForgeClient(
     }
 
     private val json = Json { ignoreUnknownKeys = true }
+    private val api = JsonApi(
+        http,
+        json,
+        "CurseForge",
+        headers = {
+            val key = apiKey()
+            if (key.isNullOrBlank()) throw IOException("CurseForge API key is not configured")
+            mapOf("x-api-key" to key)
+        },
+        httpError = { statusCode, uri ->
+            if (statusCode == 403) CurseForgeAuthException(uri) else CurseForgeHttpException(statusCode, uri)
+        },
+    )
 
     override val source: ModSource = ModSource.CURSEFORGE
 
@@ -64,7 +70,7 @@ class CurseForgeClient(
         offset: Int,
         limit: Int,
     ): ModSearchPage {
-        val uri = "$apiBaseUrl/mods/search?" + queryString(
+        val uri = "$apiBaseUrl/mods/search?" + JsonApi.queryString(
             "gameId" to MINECRAFT_GAME_ID,
             "classId" to MOD_CLASS_ID,
             "searchFilter" to query,
@@ -75,8 +81,8 @@ class CurseForgeClient(
             "modLoaderType" to CurseForgeLoaderType.fromName(loader)?.toString(),
             "gameVersion" to mcVersion?.takeIf { it.isNotBlank() },
         )
-        val response = get(uri)
-        requireSuccess(response, uri)
+        val response = api.get(uri)
+        api.requireSuccess(response, uri)
         val result = json.decodeFromString<CurseForgeSearchResponse>(response.bodyText())
         return ModSearchPage(
             hits = result.data.mapNotNull { mod ->
@@ -117,13 +123,13 @@ class CurseForgeClient(
         bestFile(files(projectId, loader, mcVersion), loader = null, mcVersion = null)
 
     private suspend fun files(projectId: String, loader: String?, mcVersion: String?): List<CurseForgeFile> {
-        val uri = "$apiBaseUrl/mods/${projectId.encodeURLParameter()}/files?" + queryString(
+        val uri = "$apiBaseUrl/mods/${projectId.encodeURLParameter()}/files?" + JsonApi.queryString(
             "modLoaderType" to CurseForgeLoaderType.fromName(loader)?.toString(),
             "gameVersion" to mcVersion?.takeIf { it.isNotBlank() },
             "pageSize" to FILE_PAGE_SIZE.toString(),
         )
-        val response = get(uri)
-        requireSuccess(response, uri)
+        val response = api.get(uri)
+        api.requireSuccess(response, uri)
         return json.decodeFromString<CurseForgeFilesResponse>(response.bodyText()).data
     }
 
@@ -143,9 +149,9 @@ class CurseForgeClient(
 
     override suspend fun version(projectId: String, versionId: String): ModVersionInfo? {
         val uri = "$apiBaseUrl/mods/${projectId.encodeURLParameter()}/files/${versionId.encodeURLParameter()}"
-        val response = get(uri)
+        val response = api.get(uri)
         if (response.statusCode == 404) return null
-        requireSuccess(response, uri)
+        api.requireSuccess(response, uri)
         val file = json.decodeFromString<CurseForgeFileResponse>(response.bodyText()).data ?: return null
         return toVersionInfo(projectId, file)
     }
@@ -209,17 +215,17 @@ class CurseForgeClient(
         val modId = update.projectId ?: return null
         val fileId = update.latestVersionId ?: return null
         val uri = "$apiBaseUrl/mods/${modId.encodeURLParameter()}/files/${fileId.encodeURLParameter()}/changelog"
-        val response = get(uri)
+        val response = api.get(uri)
         if (response.statusCode == 404) return null
-        requireSuccess(response, uri)
+        api.requireSuccess(response, uri)
         val html = json.decodeFromString<CurseForgeChangelogResponse>(response.bodyText()).data
         return html?.let(::htmlToMarkdown)?.takeIf { it.isNotBlank() }
     }
 
     private suspend fun exactMatches(fingerprints: List<Long>): List<CurseForgeFingerprintMatch> {
         val uri = "$apiBaseUrl/fingerprints"
-        val response = postJson(uri, FingerprintsRequest(fingerprints))
-        requireSuccess(response, uri)
+        val response = api.postJson(uri, FingerprintsRequest(fingerprints))
+        api.requireSuccess(response, uri)
         return json.decodeFromString<CurseForgeFingerprintsResponse>(response.bodyText()).data.exactMatches
     }
 
@@ -228,8 +234,8 @@ class CurseForgeClient(
             return emptyMap()
         }
         val uri = "$apiBaseUrl/mods"
-        val response = postJson(uri, ModsRequest(modIds))
-        requireSuccess(response, uri)
+        val response = api.postJson(uri, ModsRequest(modIds))
+        api.requireSuccess(response, uri)
         return json.decodeFromString<CurseForgeModsResponse>(response.bodyText()).data
             .mapNotNull { mod -> mod.id?.let { it to mod } }
             .toMap(LinkedHashMap())
@@ -270,7 +276,7 @@ class CurseForgeClient(
         file.gameVersions.firstOrNull { it.firstOrNull()?.isDigit() == true }
 
     private suspend fun download(url: String): ByteArray {
-        val response = get(url)
+        val response = api.get(url)
         if (response.statusCode / 100 != 2) {
             throw CurseForgeHttpException(response.statusCode, url)
         }
@@ -303,57 +309,6 @@ class CurseForgeClient(
                 )
             },
         )
-    }
-
-    private fun queryString(vararg params: Pair<String, String?>): String =
-        params.filter { it.second != null }.joinToString("&") { (key, value) -> "$key=${value!!.encodeURLParameter()}" }
-
-    private class Response(val statusCode: Int, val body: ByteArray) {
-        fun bodyText(): String = body.decodeToString()
-    }
-
-    private suspend fun get(uri: String): Response = try {
-        val key = apiKey()
-        if (key.isNullOrBlank()) {
-            throw IOException("CurseForge API key is not configured")
-        }
-        toResponse(http.get(uri) { header("x-api-key", key) })
-    } catch (e: CurseForgeHttpException) {
-        throw e
-    } catch (e: IOException) {
-        throw e
-    } catch (e: Exception) {
-        throw IOException("CurseForge request failed for $uri", e)
-    }
-
-    private suspend inline fun <reified T> postJson(uri: String, body: T): Response = try {
-        val key = apiKey()
-        if (key.isNullOrBlank()) {
-            throw IOException("CurseForge API key is not configured")
-        }
-        toResponse(
-            http.post(uri) {
-                header("x-api-key", key)
-                contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(body))
-            },
-        )
-    } catch (e: IOException) {
-        throw e
-    } catch (e: Exception) {
-        throw IOException("CurseForge request failed for $uri", e)
-    }
-
-    private suspend fun toResponse(response: HttpResponse): Response =
-        Response(response.status.value, response.readRawBytes())
-
-    private fun requireSuccess(response: Response, uri: String) {
-        if (response.statusCode == 403) {
-            throw CurseForgeAuthException(uri)
-        }
-        if (response.statusCode / 100 != 2) {
-            throw CurseForgeHttpException(response.statusCode, uri)
-        }
     }
 
     @Serializable

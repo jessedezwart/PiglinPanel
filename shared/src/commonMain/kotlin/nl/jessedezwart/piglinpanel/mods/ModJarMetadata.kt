@@ -1,13 +1,6 @@
 package nl.jessedezwart.piglinpanel.mods
 
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * One entry of a jar's dependency list: the id it names, and the versions of it that will do.
@@ -66,32 +59,12 @@ private typealias Manifest = Pair<String, (ByteArray) -> ModJarMetadata?>
  */
 object ModJarMetadataReader {
     /**
-     * Ids supplied by the loader or the game itself. They are never satisfied by a jar in the mods
-     * folder, so treating them as dependencies would flag every mod as broken.
-     */
-    private val PROVIDED_BY_PLATFORM = setOf(
-        "minecraft",
-        "java",
-        "fabricloader",
-        "fabric-loader",
-        "quilt_loader",
-        "quiltloader",
-        "quilt_base",
-        "forge",
-        "neoforge",
-        "fml",
-        "mcp",
-    )
-
-    /**
      * How deep to look for bundled jars. Mods ship their libraries inside themselves (Fabric's
      * `META-INF/jars`, NeoForge's `META-INF/jarjar`), and those libraries can bundle jars of their
      * own — the `fabric` modules inside Forgified Fabric API sit one level further down. Two levels
      * covers what is seen in practice without turning a scan into a full archive walk.
      */
     private const val MAX_NESTING = 2
-
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     /**
      * The ids a jar answers to include the ones it bundles: a dependency that ships inside another
@@ -113,10 +86,10 @@ object ModJarMetadataReader {
         )
     }
 
-    private val FABRIC: Manifest = "fabric.mod.json" to ::parseFabric
-    private val QUILT: Manifest = "quilt.mod.json" to ::parseQuilt
-    private val NEOFORGE: Manifest = "META-INF/neoforge.mods.toml" to ::parseModsToml
-    private val FORGE: Manifest = "META-INF/mods.toml" to ::parseModsToml
+    private val FABRIC: Manifest = "fabric.mod.json" to ModJsonManifests::parseFabric
+    private val QUILT: Manifest = "quilt.mod.json" to ModJsonManifests::parseQuilt
+    private val NEOFORGE: Manifest = "META-INF/neoforge.mods.toml" to ModsToml::parse
+    private val FORGE: Manifest = "META-INF/mods.toml" to ModsToml::parse
 
     /**
      * Each loader's manifest, in the order a jar's identity is taken from them: the running loader's
@@ -167,241 +140,4 @@ object ModJarMetadataReader {
                 entryName.startsWith("META-INF/jars/", ignoreCase = true) ||
                     entryName.startsWith("META-INF/jarjar/", ignoreCase = true)
                 )
-
-    private fun ByteArray.text(): String = decodeToString()
-
-    private fun sanitize(ids: Iterable<String>): List<String> =
-        ids.map { it.trim().lowercase() }
-            .filter { it.isNotEmpty() && it !in PROVIDED_BY_PLATFORM }
-            .distinct()
-
-    /**
-     * The same filtering for dependency entries. Where a manifest names one id twice — Forge files
-     * that repeat a dependency per side do — the first range wins, since a second entry qualifying
-     * the same id is a claim this cannot combine without inventing a syntax for it.
-     */
-    private fun sanitizeDeps(deps: Iterable<ModDependencyRef>): List<ModDependencyRef> =
-        deps.map { it.copy(id = it.id.trim().lowercase(), range = it.range?.trim()?.takeIf { r -> r.isNotEmpty() }) }
-            .filter { it.id.isNotEmpty() && it.id !in PROVIDED_BY_PLATFORM }
-            .distinctBy { it.id }
-
-    /** `fabric.mod.json`: `depends`/`suggests` are objects keyed by mod id, valued by version range. */
-    private fun parseFabric(bytes: ByteArray): ModJarMetadata? {
-        val root = parseJsonObject(bytes) ?: return null
-        val modId = root.string("id") ?: return null
-        return ModJarMetadata(
-            modId = modId.lowercase(),
-            name = root.string("name"),
-            version = root.string("version"),
-            provides = sanitize(root.stringList("provides")),
-            requires = sanitizeDeps(root.dependencyObject("depends")),
-            optional = sanitizeDeps(root.dependencyObject("suggests") + root.dependencyObject("recommends")),
-            side = environment(root.string("environment")),
-            library = hasLibraryBadge((root["custom"] as? JsonObject)?.get("modmenu")),
-        )
-    }
-
-    /** Mod Menu's `"modmenu": { "badges": ["library"] }`, the flag it uses to hide libraries. */
-    private fun hasLibraryBadge(modmenu: JsonElement?): Boolean =
-        (modmenu as? JsonObject)?.stringList("badges")?.any { it.equals("library", ignoreCase = true) } == true
-
-    /**
-     * What a `mods.toml` amounts to, most specific claim first: the mod's own `side`, then a
-     * `clientSideOnly`/`serverSideOnly` flag, then the side its platform dependency was scoped to.
-     *
-     * The order matters where a file states both, which happens: Distant Horizons carries a stale
-     * `clientSideOnly = "true"` next to the `side = "BOTH"` that matches the server support it has
-     * since gained.
-     */
-    private fun modSide(modsSide: String?, declared: ModSide, platform: ModSide): ModSide =
-        when (modsSide?.uppercase()) {
-            "CLIENT" -> ModSide.CLIENT
-            "SERVER" -> ModSide.SERVER
-            "BOTH" -> ModSide.BOTH
-            else -> if (declared != ModSide.UNKNOWN) declared else platform
-        }
-
-    /** Fabric's and Quilt's `environment`: `client`, `server`/`dedicated_server`, or `*` for both. */
-    private fun environment(value: String?): ModSide = when (value?.lowercase()) {
-        "client" -> ModSide.CLIENT
-        "server", "dedicated_server" -> ModSide.SERVER
-        "*" -> ModSide.BOTH
-        else -> ModSide.UNKNOWN
-    }
-
-    /** `quilt.mod.json`: everything lives under `quilt_loader`, and `depends` is an array. */
-    private fun parseQuilt(bytes: ByteArray): ModJarMetadata? {
-        val root = parseJsonObject(bytes) ?: return null
-        val loader = (root["quilt_loader"] as? JsonObject) ?: return null
-        val modId = loader.string("id") ?: return null
-        val depends = loader.dependencyArray("depends")
-        return ModJarMetadata(
-            modId = modId.lowercase(),
-            name = (loader["metadata"] as? JsonObject)?.string("name"),
-            version = loader.string("version"),
-            provides = sanitize(loader.dependencyArray("provides").map { it.first.id }),
-            requires = sanitizeDeps(depends.filterNot { it.second }.map { it.first }),
-            optional = sanitizeDeps(depends.filter { it.second }.map { it.first }),
-            side = environment((root["minecraft"] as? JsonObject)?.string("environment")),
-            // Quilt puts custom sections at the root of the file rather than under `custom`.
-            library = hasLibraryBadge(root["modmenu"]),
-        )
-    }
-
-    private fun parseJsonObject(bytes: ByteArray): JsonObject? =
-        try {
-            json.parseToJsonElement(bytes.text()) as? JsonObject
-        } catch (e: Exception) {
-            null
-        }
-
-    private fun JsonObject.string(key: String): String? =
-        (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotBlank() }
-
-    private fun JsonObject.stringList(key: String): List<String> =
-        (this[key] as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
-
-    /**
-     * A Fabric dependency table: `{"fabric-api": ">=0.92.0"}`, where the value may also be an
-     * array of predicates. An array means "any of these will do", which is what `||` says in the
-     * syntax [ModVersionRange] reads, so the alternatives are joined with it.
-     */
-    private fun JsonObject.dependencyObject(key: String): List<ModDependencyRef> =
-        (this[key] as? JsonObject)?.map { (id, value) -> ModDependencyRef(id, versionRange(value)) }.orEmpty()
-
-    /** A version range written either as one predicate or as a list of alternatives. */
-    private fun versionRange(value: JsonElement?): String? = when (value) {
-        is JsonPrimitive -> value.content.takeIf { it.isNotBlank() }
-        is JsonArray -> value.mapNotNull { (it as? JsonPrimitive)?.content?.takeIf(String::isNotBlank) }
-            .takeIf { it.isNotEmpty() }
-            ?.joinToString(" || ")
-        else -> null
-    }
-
-    /**
-     * Quilt entries are either a bare id string or an object with `id`, a `versions` range and an
-     * `optional` flag.
-     */
-    private fun JsonObject.dependencyArray(key: String): List<Pair<ModDependencyRef, Boolean>> =
-        (this[key] as? JsonArray).orEmpty().mapNotNull { element ->
-            when (element) {
-                is JsonPrimitive -> ModDependencyRef(element.content) to false
-                is JsonObject -> {
-                    val id = element.string("id") ?: return@mapNotNull null
-                    val optional = (element["optional"] as? JsonPrimitive)?.content == "true"
-                    ModDependencyRef(id, versionRange(element["versions"])) to optional
-                }
-                else -> null
-            }
-        }
-
-    /**
-     * `mods.toml` (Forge and NeoForge), read line by line rather than with a full TOML parser: the
-     * only shapes that matter are `[[mods]]` and `[[dependencies.<parent>]]` tables holding flat
-     * key/value pairs, and a mis-parse here would cost a spurious warning, not a broken server.
-     */
-    private fun parseModsToml(bytes: ByteArray): ModJarMetadata? {
-        // One jar may declare several `[[mods]]`; the loader registers every one of them, so the
-        // extras become ids this jar provides rather than being dropped.
-        val modIds = mutableListOf<String>()
-        // Aliases a mod answers to, e.g. Forgified Fabric API's `fabric-api` for Fabric mods run
-        // through Connector.
-        val providedIds = mutableListOf<String>()
-        var name: String? = null
-        var version: String? = null
-        val required = mutableListOf<ModDependencyRef>()
-        val optional = mutableListOf<ModDependencyRef>()
-
-        var inMods = false
-        var inDependencies = false
-        // A dependency table's fields arrive one per line, so they are collected until the next header.
-        var dependencyId: String? = null
-        var dependencyRequired = true
-        var dependencySide: String? = null
-        var dependencyRange: String? = null
-
-        // What the file states outright, and what its own platform dependency implies.
-        var modsSide: String? = null
-        var declaredSide = ModSide.UNKNOWN
-        var platformSide = ModSide.UNKNOWN
-
-        fun flushDependency() {
-            val id = dependencyId ?: return
-            // A mod that scopes its own dependency on Minecraft or the loader to one side runs on
-            // that side: there is no per-mod side key in mods.toml, and this is what the mods that
-            // bother to say so actually write. `BOTH` is the value every generated template ships
-            // with, so it is read as silence rather than as a claim.
-            if (platformSide == ModSide.UNKNOWN && id.trim().lowercase() in PROVIDED_BY_PLATFORM) {
-                platformSide = when (dependencySide?.uppercase()) {
-                    "CLIENT" -> ModSide.CLIENT
-                    "SERVER" -> ModSide.SERVER
-                    else -> ModSide.UNKNOWN
-                }
-            }
-            val dependency = ModDependencyRef(id, dependencyRange)
-            if (dependencyRequired) required += dependency else optional += dependency
-            dependencyId = null
-            dependencyRequired = true
-            dependencySide = null
-            dependencyRange = null
-        }
-
-        for (raw in bytes.text().lineSequence()) {
-            val line = raw.substringBefore('#').trim()
-            if (line.isEmpty()) continue
-
-            if (line.startsWith("[")) {
-                flushDependency()
-                val header = line.trim('[', ']').trim()
-                inMods = header == "mods"
-                inDependencies = header.startsWith("dependencies")
-                continue
-            }
-
-            val key = line.substringBefore('=', "").trim().lowercase()
-            if (key.isEmpty()) continue
-            val value = line.substringAfter('=').trim().trim('"', '\'')
-
-            when {
-                inMods && key == "modid" -> modIds += value
-                // Only the single-line `["a", "b"]` form, which is the one seen in practice.
-                inMods && key == "provides" ->
-                    providedIds += value.removePrefix("[").removeSuffix("]").split(',').map { it.trim().trim('"', '\'') }
-                inMods && key == "displayname" && name == null -> name = value
-                inMods && key == "version" && version == null -> version = value
-                inDependencies && key == "modid" -> {
-                    flushDependency()
-                    dependencyId = value
-                }
-                // Forge spells it `mandatory = true`; NeoForge uses `type = "required"`.
-                inDependencies && key == "mandatory" -> dependencyRequired = value.equals("true", ignoreCase = true)
-                inDependencies && key == "type" -> dependencyRequired = value.equals("required", ignoreCase = true)
-                inDependencies && key == "side" -> dependencySide = value
-                inDependencies && key == "versionrange" -> dependencyRange = value
-                // NeoForge's outright statements of side. `side` on the mod itself is the newest
-                // and most specific of them; `clientSideOnly` is written both at the root of the
-                // file and inside the mod's own table, so both places are read.
-                inMods && key == "side" -> modsSide = value
-                !inDependencies && key == "clientsideonly" ->
-                    if (value.equals("true", ignoreCase = true)) declaredSide = ModSide.CLIENT
-                !inDependencies && key == "serversideonly" ->
-                    if (value.equals("true", ignoreCase = true)) declaredSide = ModSide.SERVER
-            }
-        }
-        flushDependency()
-
-        val ids = sanitize(modIds)
-        val id = ids.firstOrNull() ?: return null
-        return ModJarMetadata(
-            modId = id,
-            name = name,
-            version = version,
-            provides = (ids.drop(1) + sanitize(providedIds)).distinct() - id,
-            // A jar declaring several mods also declares their dependencies on each other; those
-            // are satisfied from within, so they are not requirements of the jar as a whole.
-            requires = sanitizeDeps(required).filterNot { it.id in ids },
-            optional = sanitizeDeps(optional).filterNot { it.id in ids },
-            side = modSide(modsSide, declaredSide, platformSide),
-        )
-    }
 }

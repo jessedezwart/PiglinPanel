@@ -1,6 +1,5 @@
 package nl.jessedezwart.piglinpanel.mods
 
-import kotlin.time.Duration.Companion.hours
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -8,16 +7,19 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
-import nl.jessedezwart.piglinpanel.cache.SuspendCache
 import nl.jessedezwart.piglinpanel.curseforge.ModFingerprintUpdateSource
 import nl.jessedezwart.piglinpanel.fs.ServerFileSystem
 import nl.jessedezwart.piglinpanel.fs.ServerFileSystemProvider
 import nl.jessedezwart.piglinpanel.model.ModFile
 import nl.jessedezwart.piglinpanel.model.ModFolder
-import nl.jessedezwart.piglinpanel.model.ModGroup
 import nl.jessedezwart.piglinpanel.model.ModUpdate
 import nl.jessedezwart.piglinpanel.model.ServerProfile
 import nl.jessedezwart.piglinpanel.modrinth.ModUpdateSource
+import nl.jessedezwart.piglinpanel.mods.ModJarNames.enableName
+import nl.jessedezwart.piglinpanel.mods.ModJarNames.joinPath
+import nl.jessedezwart.piglinpanel.mods.ModJarNames.nextArchiveName
+import nl.jessedezwart.piglinpanel.mods.ModJarNames.parentPath
+import nl.jessedezwart.piglinpanel.mods.ModJarNames.uniqueName
 import nl.jessedezwart.piglinpanel.search.ModSource
 import okio.IOException
 
@@ -45,58 +47,14 @@ class ModService(
     private val curseForgeClient: ModFingerprintUpdateSource? = null,
     private val modListStore: ModListStore? = null,
 ) {
-    companion object {
-        private const val DISABLED_SUFFIX = ".disabled"
-        private const val JAR_SUFFIX = ".jar"
-
-        internal fun nextArchiveName(relativePath: String): String =
-            if (relativePath.endsWith(DISABLED_SUFFIX)) relativePath else relativePath + DISABLED_SUFFIX
-
-        internal fun enableName(relativePath: String): String =
-            if (relativePath.endsWith(DISABLED_SUFFIX)) {
-                relativePath.dropLast(DISABLED_SUFFIX.length)
-            } else {
-                relativePath
-            }
-
-        private fun joinPath(folderPath: String, fileName: String): String = when {
-            folderPath.isBlank() -> fileName
-            folderPath.endsWith("/") -> folderPath + fileName
-            else -> "$folderPath/$fileName"
-        }
-
-        private fun parentPath(relativePath: String): String = relativePath.substringBeforeLast('/', "")
-
-        /**
-         * [relativePath] when nothing occupies it, otherwise the same name with a `~1`, `~2`, ...
-         * tag inserted before the `.jar`.
-         *
-         * Two versions of a mod can carry the same file name -- an update that keeps its name
-         * leaves exactly that behind -- and a move replaces its target, so archiving one on top of
-         * the other silently deletes a version the user asked to keep. The tag goes before the
-         * extension so the result is still a `.jar` (or `.jar.disabled`) that a scan picks up.
-         */
-        internal fun uniqueName(relativePath: String, taken: Set<String>): String {
-            if (relativePath !in taken) return relativePath
-            val disabled = relativePath.endsWith(DISABLED_SUFFIX)
-            val stem = enableName(relativePath).removeSuffix(JAR_SUFFIX)
-            var counter = 1
-            while (true) {
-                val candidate = "$stem~$counter$JAR_SUFFIX" + if (disabled) DISABLED_SUFFIX else ""
-                if (candidate !in taken) return candidate
-                counter++
-            }
-        }
-    }
-
-    private val updatesCache = SuspendCache<String, ModUpdate>(ttl = 24.hours, maxEntries = 1000)
+    private val updateLookup = ModUpdateLookup(modrinthClient, curseForgeClient)
 
     /**
      * The mod list as the last [scan] of [profile] left it, without contacting the server. Something
      * to show while the folders are listed; a jar that has since been removed is still in it.
      */
     suspend fun lastKnown(profile: ServerProfile): List<ModFile> =
-        modListStore?.load(profile.id, updateTarget(profile)).orEmpty()
+        modListStore?.load(profile.id, profile.updateTarget()).orEmpty()
 
     /**
      * Lists the mod folders of [profile]. With [checkUpdates] every new or changed jar is read and
@@ -111,16 +69,10 @@ class ModService(
     ): List<ModFile> {
         val fileSystem = fileSystems.fileSystem(profile)
 
-        data class Candidate(val folder: ModFolder, val path: String, val name: String, val size: Long, val sha1Key: String)
-
         val candidates = buildList {
             for (folder in profile.modFolders) {
                 for (entry in fileSystem.list(folder.path)) {
-                    if (entry.directory ||
-                        (!entry.name.endsWith(".jar") && !entry.name.endsWith(".jar$DISABLED_SUFFIX"))
-                    ) {
-                        continue
-                    }
+                    if (entry.directory || !ModJarNames.isModJar(entry.name)) continue
                     add(folder to entry)
                 }
             }
@@ -185,7 +137,7 @@ class ModService(
                 relativePath = entry.path,
                 fileName = entry.name,
                 size = entry.size,
-                archived = entry.name.endsWith(DISABLED_SUFFIX),
+                archived = entry.name.endsWith(ModJarNames.DISABLED_SUFFIX),
                 sha1 = sha1,
                 update = known[sha1]?.update,
                 metadata = hashes?.metadata,
@@ -201,18 +153,11 @@ class ModService(
 
         if (checkUpdates && lookupHashesByPath.isNotEmpty()) {
             progress?.invoke(ScanProgress("lookup", 0, lookupHashesByPath.size, null))
-            applySuggestedUpdates(profile, mods, lookupHashesByPath, forceRefresh)
+            updateLookup.applySuggestedUpdates(profile, mods, lookupHashesByPath, forceRefresh)
         }
-        modListStore?.save(profile.id, updateTarget(profile), mods)
+        modListStore?.save(profile.id, profile.updateTarget(), mods)
         return mods
     }
-
-    /**
-     * The loader and Minecraft version updates are resolved against: the same jar has a different
-     * newest version depending on which Minecraft version it is being asked about.
-     */
-    private fun updateTarget(profile: ServerProfile): String =
-        "${profile.modLoader.orEmpty()}:${profile.mcVersion.orEmpty()}"
 
     suspend fun upload(profile: ServerProfile, folder: ModFolder, fileName: String, bytes: ByteArray) {
         fileSystems.fileSystem(profile).writeBytes(joinPath(folder.path, fileName), bytes)
@@ -237,7 +182,7 @@ class ModService(
         val taken = HashMap<String, MutableSet<String>>()
         for (other in mods) {
             if (other.archived || other.relativePath == target.relativePath) continue
-            if (other.folderId != target.folderId || !sameMod(other, target)) continue
+            if (other.folderId != target.folderId || !ModGrouping.sameMod(other, target)) continue
             moveUnique(fileSystem, other.relativePath, nextArchiveName(other.relativePath), taken)
         }
         moveUnique(fileSystem, target.relativePath, enableName(target.relativePath), taken)
@@ -350,186 +295,4 @@ class ModService(
         names += unique
         return unique
     }
-
-    /**
-     * Whether two files are versions of the same mod. The repository project and the jar's own mod
-     * id both identify it across renames; the file name catches the pair a quick scan leaves
-     * unidentified, where an update that reused its name is exactly what put two versions there.
-     */
-    private fun sameMod(a: ModFile, b: ModFile): Boolean =
-        groupKey(a) == groupKey(b) || enableName(a.relativePath) == enableName(b.relativePath)
-
-    /**
-     * Collapses scanned files into one [ModGroup] per mod (keyed by the resolved Modrinth/CurseForge
-     * project when known, otherwise by file path), surfacing the active version with its disabled versions sorted
-     * newest first.
-     */
-    fun group(mods: List<ModFile>): List<ModGroup> {
-        val byKey = LinkedHashMap<String, MutableList<ModFile>>()
-        for (mod in mods) {
-            byKey.getOrPut(groupKey(mod)) { mutableListOf() }.add(mod)
-        }
-        val graph = ModDependencyGraph.of(mods)
-        return byKey.map { (key, files) ->
-            val active = files.firstOrNull { !it.archived }
-            val representative = active ?: files.first()
-            // Every other file of this mod. Usually the disabled versions, but a second *enabled*
-            // jar lands here too — that is a broken state worth surfacing, so it sorts to the top
-            // rather than being hidden.
-            val archived = files.asSequence()
-                .filter { it !== active }
-                .sortedWith(compareBy<ModFile> { it.archived }.thenByDescending { it.fileName })
-                .toList()
-            ModGroup(
-                key = key,
-                displayName = displayName(representative),
-                iconUrl = files.firstNotNullOfOrNull { it.update?.iconUrl },
-                folderName = representative.folderName,
-                active = active,
-                archived = archived,
-                update = active?.update,
-                side = representative.side,
-                sources = representative.sources,
-                downloads = files.maxOf { it.update?.downloads ?: 0L },
-                modifiedAt = representative.modifiedAt,
-                missingDependencies = active?.let(graph::missingDependenciesOf).orEmpty(),
-                versionConflicts = active?.let(graph::unsatisfiedDependenciesOf).orEmpty(),
-                disabledDependencies = active
-                    ?.let { graph.disabledDependenciesOf(it).map(::displayName) }
-                    .orEmpty()
-                    .distinct(),
-                library = representative.library,
-                unusedLibrary = active != null && active.library && active.metadata != null && !graph.isUsed(active),
-            )
-        }
-    }
-
-    /**
-     * The disabled jars [target] needs in order to load, resolved transitively. Reported rather
-     * than acted on: enabling a jar on the user's behalf changes what the server loads, and the
-     * point of the dependency check is to tell them, not to decide for them.
-     */
-    fun disabledDependenciesOf(mods: List<ModFile>, target: ModFile): List<ModFile> =
-        ModDependencyGraph.of(mods).disabledDependenciesOf(target)
-
-    /** The hard dependencies of each of [targets], keyed by relative path; see [ModDependencyGraph.requiredDependenciesOf]. */
-    fun requiredDependenciesOf(mods: List<ModFile>, targets: List<ModFile>): Map<String, List<RequiredDependency>> {
-        val graph = ModDependencyGraph.of(mods)
-        return targets.associate { it.relativePath to graph.requiredDependenciesOf(it) }
-    }
-
-    /** The enabled mods that would lose a required dependency if [target] were disabled or deleted. */
-    fun dependentsBrokenBy(mods: List<ModFile>, target: ModFile): List<String> =
-        ModDependencyGraph.of(mods).wouldBreakIfRemoved(target).map(::displayName).distinct()
-
-    /**
-     * Identity of the mod a file belongs to, so its versions collapse into one group. The jar's own
-     * mod id backs up the repository match: it groups mods no repository indexes, and — unlike the
-     * file path — it does not change when a version is enabled or disabled.
-     */
-    private fun groupKey(mod: ModFile): String {
-        val update = mod.update
-        val projectId = update?.projectId
-        return when {
-            projectId != null -> "project:${update.source}:$projectId"
-            mod.metadata != null -> "mod:${mod.metadata.modId}"
-            else -> "file:${enableName(mod.relativePath)}"
-        }
-    }
-
-    private fun displayName(mod: ModFile): String =
-        mod.update?.projectName?.takeIf { it.isNotBlank() }
-            ?: mod.metadata?.name?.takeIf { it.isNotBlank() }
-            ?: mod.fileName
-
-    /**
-     * Looks each mod up on Modrinth by SHA-1 and, in the same pass, on CurseForge by fingerprint.
-     * Both lookups are batched, so checking both costs a fixed handful of requests. A Modrinth
-     * match wins where both repositories know a file; CurseForge covers the rest.
-     */
-    private suspend fun applySuggestedUpdates(
-        profile: ServerProfile,
-        mods: MutableList<ModFile>,
-        lookupHashesByPath: Map<String, ModFileHashes>,
-        forceRefresh: Boolean,
-    ) {
-        val loader = profile.modLoader
-        val gameVersion = profile.mcVersion
-        val target = updateTarget(profile)
-        val resolved = LinkedHashMap<String, ModUpdate>()
-
-        val missingSha1s = mutableListOf<String>()
-        for (sha1 in lookupHashesByPath.values.map { it.sha1 }.distinct()) {
-            val cached = if (forceRefresh) null else updatesCache.getIfPresent(modrinthCacheKey(target, sha1))
-            if (cached != null) resolved[sha1] = cached else missingSha1s += sha1
-        }
-        if (missingSha1s.isNotEmpty()) {
-            val fetched = try {
-                modrinthClient.findSuggestedUpdates(missingSha1s, loader, gameVersion)
-            } catch (e: IOException) {
-                emptyMap()
-            }
-            for (sha1 in missingSha1s) {
-                val update = fetched[sha1] ?: continue
-                resolved[sha1] = update
-                updatesCache.put(modrinthCacheKey(target, sha1), update)
-            }
-        }
-
-        // Every file is offered to CurseForge too, not only the ones Modrinth missed: the
-        // fingerprint lookup is a single batched request either way, and which repositories carry
-        // a mod is worth showing in its own right.
-        val curseForgeResolved = LinkedHashMap<Long, ModUpdate>()
-        val fingerprints = lookupHashesByPath.values.map { it.fingerprint }.distinct()
-        val curseForge = curseForgeClient
-        if (curseForge != null && curseForge.available && fingerprints.isNotEmpty()) {
-            val missingFingerprints = mutableListOf<Long>()
-            for (fingerprint in fingerprints) {
-                val cached = if (forceRefresh) {
-                    null
-                } else {
-                    updatesCache.getIfPresent(curseForgeCacheKey(target, fingerprint))
-                }
-                if (cached != null) curseForgeResolved[fingerprint] = cached else missingFingerprints += fingerprint
-            }
-            if (missingFingerprints.isNotEmpty()) {
-                val fetched = try {
-                    curseForge.findSuggestedUpdates(missingFingerprints, loader, gameVersion)
-                } catch (e: IOException) {
-                    emptyMap()
-                }
-                for (fingerprint in missingFingerprints) {
-                    val update = fetched[fingerprint] ?: continue
-                    curseForgeResolved[fingerprint] = update
-                    updatesCache.put(curseForgeCacheKey(target, fingerprint), update)
-                }
-            }
-        }
-
-        for (i in mods.indices) {
-            val mod = mods[i]
-            val hashes = lookupHashesByPath[mod.relativePath] ?: continue
-            val modrinth = resolved[hashes.sha1]
-            val curse = curseForgeResolved[hashes.fingerprint]
-            // Modrinth's match is the one that gets applied; CurseForge's is recorded either way.
-            // Either repository calling it a library is enough; they categorise independently.
-            val applied = (modrinth ?: curse)?.let { it.copy(library = it.library || curse?.library == true) }
-            mods[i] = mod.copy(
-                update = applied ?: mod.update,
-                // Neither answering usually means the lookup failed, so what was known stays.
-                sources = if (modrinth == null && curse == null) {
-                    mod.sources
-                } else {
-                    buildSet {
-                        if (modrinth != null) add(ModSource.MODRINTH)
-                        if (curse != null) add(ModSource.CURSEFORGE)
-                    }
-                },
-            )
-        }
-    }
-
-    private fun modrinthCacheKey(target: String, sha1: String): String = "modrinth:$target:$sha1"
-
-    private fun curseForgeCacheKey(target: String, fingerprint: Long): String = "curseforge:$target:$fingerprint"
 }

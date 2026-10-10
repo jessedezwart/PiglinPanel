@@ -300,14 +300,14 @@ class ModServiceTest {
 
     @Test
     fun archiveNameAddsDisabledSuffix() {
-        assertEquals("mods/example.jar.disabled", ModService.nextArchiveName("mods/example.jar"))
-        assertEquals("mods/example.jar.disabled", ModService.nextArchiveName("mods/example.jar.disabled"))
+        assertEquals("mods/example.jar.disabled", ModJarNames.nextArchiveName("mods/example.jar"))
+        assertEquals("mods/example.jar.disabled", ModJarNames.nextArchiveName("mods/example.jar.disabled"))
     }
 
     @Test
     fun enableNameStripsDisabledSuffix() {
-        assertEquals("mods/example.jar", ModService.enableName("mods/example.jar.disabled"))
-        assertEquals("mods/example.jar", ModService.enableName("mods/example.jar"))
+        assertEquals("mods/example.jar", ModJarNames.enableName("mods/example.jar.disabled"))
+        assertEquals("mods/example.jar", ModJarNames.enableName("mods/example.jar"))
     }
 
     @Test
@@ -316,7 +316,7 @@ class ModServiceTest {
         val active = ModFile("mods", "mods", "mods", "mods/create-5.1.jar", "create-5.1.jar", 20, false, "h1", projectUpdate)
         val archived = ModFile("mods", "mods", "mods", "mods/create-5.0.jar.disabled", "create-5.0.jar.disabled", 19, true, "h2", projectUpdate)
 
-        val groups = service().group(listOf(active, archived))
+        val groups = ModGrouping.group(listOf(active, archived))
 
         val group = groups.single()
         assertEquals("create-5.1.jar", group.active?.fileName)
@@ -462,7 +462,7 @@ class ModServiceTest {
         val user = modFile("mods/create.jar", archived = false)
             .copy(metadata = ModJarMetadata(modId = "create", requires = listOf(ModDependencyRef("architectury")), optional = listOf(ModDependencyRef("jei"))))
 
-        val unused = service().group(listOf(used, optionallyUsed, orphan, disabledUser, unreadable, user))
+        val unused = ModGrouping.group(listOf(used, optionallyUsed, orphan, disabledUser, unreadable, user))
             .filter { it.unusedLibrary }
 
         assertEquals(listOf("geckolib.jar"), unused.map { it.active?.fileName })
@@ -473,7 +473,7 @@ class ModServiceTest {
         val mod = modFile("mods/cloth.jar", archived = false)
             .copy(metadata = ModJarMetadata(modId = "cloth-config", library = true))
 
-        assertTrue(service().group(listOf(mod)).single().unusedLibrary)
+        assertTrue(ModGrouping.group(listOf(mod)).single().unusedLibrary)
     }
 
     @Test

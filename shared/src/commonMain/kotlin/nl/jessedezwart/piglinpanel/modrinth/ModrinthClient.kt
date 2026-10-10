@@ -1,13 +1,6 @@
 package nl.jessedezwart.piglinpanel.modrinth
 
 import io.ktor.client.HttpClient
-import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.readRawBytes
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
@@ -40,6 +33,7 @@ class ModrinthClient(
     }
 
     private val json = Json { ignoreUnknownKeys = true }
+    private val api = JsonApi(http, json, "Modrinth", httpError = ::ModrinthHttpException)
     private val projectsCache =
         SuspendCache<String, Map<String, ModrinthProject>>(ttl = 24.hours, maxEntries = 50)
     private val gameVersionsCache = SuspendCache<String, List<GameVersion>>(ttl = 24.hours, maxEntries = 1)
@@ -50,8 +44,8 @@ class ModrinthClient(
      */
     suspend fun gameVersions(): List<GameVersion> = gameVersionsCache.getOrPut(GAME_VERSIONS_KEY) {
         val uri = "$apiBaseUrl/tag/game_version"
-        val response = get(uri)
-        requireSuccess(response, uri)
+        val response = api.get(uri)
+        api.requireSuccess(response, uri)
         json.decodeFromString<List<ModrinthGameVersion>>(response.bodyText())
             .map {
                 GameVersion(
@@ -115,8 +109,8 @@ class ModrinthClient(
         return projectsCache.getOrPut(projectIds.sorted().joinToString(",")) {
             val idsJson = json.encodeToString(projectIds)
             val uri = "$apiBaseUrl/projects?ids=${idsJson.encodeURLParameter()}"
-            val response = get(uri)
-            requireSuccess(response, uri)
+            val response = api.get(uri)
+            api.requireSuccess(response, uri)
             val projects = json.decodeFromString<List<ModrinthProject>>(response.bodyText())
             buildMap {
                 for (project in projects) {
@@ -128,7 +122,7 @@ class ModrinthClient(
     }
 
     suspend fun download(uri: String): ByteArray {
-        val response = get(uri)
+        val response = api.get(uri)
         if (response.statusCode / 100 != 2) {
             throw ModrinthHttpException(response.statusCode, uri)
         }
@@ -182,14 +176,14 @@ class ModrinthClient(
         limit: Int,
     ): ModSearchPage {
         val facets = json.encodeToString(searchFacets(loader, mcVersion))
-        val uri = "$apiBaseUrl/search?" + queryString(
+        val uri = "$apiBaseUrl/search?" + JsonApi.queryString(
             "query" to query,
             "facets" to facets,
             "offset" to offset.toString(),
             "limit" to limit.toString(),
         )
-        val response = get(uri)
-        requireSuccess(response, uri)
+        val response = api.get(uri)
+        api.requireSuccess(response, uri)
         val result = json.decodeFromString<ModrinthSearchResponse>(response.bodyText())
         return ModSearchPage(
             hits = result.hits.mapNotNull { hit ->
@@ -235,14 +229,14 @@ class ModrinthClient(
         loader: String?,
         mcVersion: String?,
     ): List<ModrinthVersion> {
-        val query = queryString(
+        val query = JsonApi.queryString(
             "loaders" to loader?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
             "game_versions" to mcVersion?.takeIf { it.isNotBlank() }?.let { json.encodeToString(listOf(it)) },
         )
         val uri = "$apiBaseUrl/project/${projectId.encodeURLParameter()}/version" +
             query.takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
-        val response = get(uri)
-        requireSuccess(response, uri)
+        val response = api.get(uri)
+        api.requireSuccess(response, uri)
         return json.decodeFromString(response.bodyText())
     }
 
@@ -313,20 +307,17 @@ class ModrinthClient(
         mcVersion?.takeIf { it.isNotBlank() }?.let { add(listOf("versions:$it")) }
     }
 
-    private fun queryString(vararg params: Pair<String, String?>): String =
-        params.filter { it.second != null }.joinToString("&") { (key, value) -> "$key=${value!!.encodeURLParameter()}" }
-
     private suspend fun fetchVersion(projectId: String, versionId: String): ModrinthVersion {
         val uri = "$apiBaseUrl/project/${projectId.encodeURLParameter()}/version/${versionId.encodeURLParameter()}"
-        val response = get(uri)
-        requireSuccess(response, uri)
+        val response = api.get(uri)
+        api.requireSuccess(response, uri)
         return json.decodeFromString(response.bodyText())
     }
 
     private suspend fun versionsByHashes(sha1s: List<String>): Map<String, ModrinthVersion> {
         val uri = "$apiBaseUrl/version_files"
-        val response = postJson(uri, HashesRequest(hashes = sha1s, algorithm = "sha1"))
-        requireSuccess(response, uri)
+        val response = api.postJson(uri, HashesRequest(hashes = sha1s, algorithm = "sha1"))
+        api.requireSuccess(response, uri)
         return readVersionMap(response.bodyText())
     }
 
@@ -336,11 +327,11 @@ class ModrinthClient(
         gameVersions: List<String>,
     ): Map<String, ModrinthVersion> {
         val uri = "$apiBaseUrl/version_files/update"
-        val response = postJson(
+        val response = api.postJson(
             uri,
             UpdateRequest(hashes = sha1s, algorithm = "sha1", loaders = loaders, gameVersions = gameVersions),
         )
-        requireSuccess(response, uri)
+        api.requireSuccess(response, uri)
         return readVersionMap(response.bodyText())
     }
 
@@ -373,38 +364,6 @@ class ModrinthClient(
         json.decodeFromString<Map<String, ModrinthVersion?>>(body)
             .mapNotNull { (key, value) -> value?.let { key to it } }
             .toMap(LinkedHashMap())
-
-    private class Response(val statusCode: Int, val body: ByteArray) {
-        fun bodyText(): String = body.decodeToString()
-    }
-
-    private suspend fun get(uri: String): Response = try {
-        toResponse(http.get(uri))
-    } catch (e: ModrinthHttpException) {
-        throw e
-    } catch (e: Exception) {
-        throw IOException("Modrinth request failed for $uri", e)
-    }
-
-    private suspend inline fun <reified T> postJson(uri: String, body: T): Response = try {
-        toResponse(
-            http.post(uri) {
-                contentType(ContentType.Application.Json)
-                setBody(json.encodeToString(body))
-            },
-        )
-    } catch (e: Exception) {
-        throw IOException("Modrinth request failed for $uri", e)
-    }
-
-    private suspend fun toResponse(response: HttpResponse): Response =
-        Response(response.status.value, response.readRawBytes())
-
-    private fun requireSuccess(response: Response, uri: String) {
-        if (response.statusCode / 100 != 2) {
-            throw ModrinthHttpException(response.statusCode, uri)
-        }
-    }
 
     @Serializable
     private data class HashesRequest(val hashes: List<String>, val algorithm: String)
